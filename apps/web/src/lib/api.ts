@@ -25,7 +25,7 @@ async function apiRequest<T = unknown>(
     }
     headers.set("Authorization", `Bearer ${API_TOKEN}`);
   }
-  if (!headers.has("Content-Type") && (options.method === "POST" || options.method === "PUT")) {
+  if (!headers.has("Content-Type") && (options.method === "POST" || options.method === "PUT" || options.method === "PATCH")) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -92,6 +92,7 @@ export interface Campaign {
     status: string;
     error: string | null;
   }>;
+  job_summary: JobSummary;
 }
 
 export interface CreatorAccount {
@@ -158,6 +159,7 @@ export interface CampaignCreator {
   risks: string[];
   unknowns: string[];
   recommended_pitch: string;
+  notes: string | null;
   outreach_draft: { subject?: string; body?: string } | null;
   created_at: string;
   updated_at: string;
@@ -178,13 +180,38 @@ export interface JobStatus {
   requested_by_api_key_id: string | null;
   job_type: string;
   provider: string | null;
-  status: "queued" | "running" | "finished" | "failed";
+  status: "queued" | "running" | "passed" | "failed";
   input: unknown;
   output: unknown;
   error: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  next_run_at: string | null;
+  locked_at: string | null;
+  locked_by: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface JobSummary {
+  queued: number;
+  running: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  total: number;
+}
+
+export interface CampaignExport {
+  id: string;
+  org_id: string | null;
+  campaign_id: string;
+  storage_key: string;
+  file_url: string;
+  row_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export const api = {
@@ -218,7 +245,7 @@ export const api = {
   async buildShortlist(
     campaignId: string,
     params: { limit?: number; query_limit?: number } = {}
-  ): Promise<{ data: { campaign_id: string; shortlist: CampaignCreator[]; candidate_count: number } }> {
+  ): Promise<{ data: { campaign_id: string; shortlist: CampaignCreator[]; candidate_count: number; job_summary: JobSummary } }> {
     return apiRequest(`/v1/campaigns/${campaignId}/shortlist`, {
       method: "POST",
       body: JSON.stringify(params),
@@ -243,6 +270,24 @@ export const api = {
   async retryJob(jobId: string): Promise<{ data: unknown }> {
     return apiRequest(`/v1/jobs/${jobId}/retry`, {
       method: "POST",
+    });
+  },
+
+  async updateCampaignCreator(
+    campaignId: string,
+    creatorId: string,
+    params: { status?: string; recommended_pitch?: string; notes?: string | null }
+  ): Promise<{ data: CampaignCreator }> {
+    return apiRequest(`/v1/campaigns/${campaignId}/creators/${creatorId}`, {
+      method: "PATCH",
+      body: JSON.stringify(params),
+    });
+  },
+
+  async exportCampaign(campaignId: string): Promise<{ data: CampaignExport }> {
+    return apiRequest(`/v1/campaigns/${campaignId}/export`, {
+      method: "POST",
+      body: JSON.stringify({}),
     });
   },
 };

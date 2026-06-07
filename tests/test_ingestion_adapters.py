@@ -106,7 +106,7 @@ class IngestionAdapterTestCase(unittest.TestCase):
 
     def test_refresh_job_can_ingest_public_web_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = DiscoveryStore(Path(tmp) / "jobs.sqlite3")
+            store = DiscoveryStore(Path(tmp) / "jobs-store-arg-ignored")
             try:
                 job_id = enqueue_refresh_job(
                     store,
@@ -123,7 +123,7 @@ class IngestionAdapterTestCase(unittest.TestCase):
 
     def test_discovery_query_job_records_provider_usage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = DiscoveryStore(Path(tmp) / "query.sqlite3")
+            store = DiscoveryStore(Path(tmp) / "query-store-arg-ignored")
             try:
                 job_id = enqueue_discovery_query_job(
                     store,

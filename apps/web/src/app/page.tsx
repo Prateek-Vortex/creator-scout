@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { motion, useScroll, useTransform, useSpring, AnimatePresence } from "framer-motion";
+import { motion, useScroll, useTransform, useSpring } from "framer-motion";
 import { api } from "@/lib/api";
 import type { Campaign, CampaignCreator } from "@/lib/api";
 import { getInsForgeClient, hasInsForgeConfig } from "@/lib/insforge";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PLATFORM_OPTIONS = ["youtube", "instagram", "tiktok"];
-const GOAL_OPTIONS = ["ugc", "seeding", "reviews", "affiliate", "awareness"];
 const CRM_COLUMNS = [
   { id: "shortlisted",     label: "Shortlisted",      color: "text-[#7a7a7a]" },
   { id: "contacted",       label: "Contacted",        color: "text-ink" },
@@ -30,10 +29,41 @@ const AVATAR_COLORS = [
 ];
 
 const STICKER_ROTATIONS = [-2, 1.5, -1, 2.5, -1.5, 2, -0.5, 1];
+const FINDER_LOGS = [
+  "Checking campaign job status...",
+  "Reading cached creator index...",
+  "Computing alignment scores...",
+  "Drafting templates...",
+  "Complete",
+];
+const CRAWLER_LOGS = [
+  "Resolving domain...",
+  "Crawling pages...",
+  "Extracting brand DNA...",
+  "Building campaign brief...",
+  "Done!",
+];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ApiHealth = "checking" | "online" | "offline";
 type ActiveTab = "brief" | "strategy" | "shortlist" | "outreach" | "crm" | "export";
+type AuthUser = {
+  email?: string | null;
+  profile?: {
+    name?: string | null;
+  } | null;
+} | null;
+
+function jobSummaryFor(campaign: Campaign) {
+  const fallback = { queued: 0, running: 0, passed: 0, failed: 0, pending: 0, total: 0 };
+  const summary = campaign.job_summary ?? fallback;
+  return {
+    ...fallback,
+    ...summary,
+    pending: summary.pending ?? ((summary.queued ?? 0) + (summary.running ?? 0)),
+    total: summary.total ?? campaign.jobs.length,
+  };
+}
 
 // ─── Tiny SVG Icon Kit ────────────────────────────────────────────────────────
 const Icon = {
@@ -162,7 +192,7 @@ function Navbar({
   onSignOut,
 }: {
   onGetStarted: () => void;
-  user: any;
+  user: AuthUser;
   onSignOut: () => void;
 }) {
   const [scrolled, setScrolled] = useState(false);
@@ -573,8 +603,12 @@ function Workspace({
   onFindCreators,
   onStatusChange,
   onPitchChange,
+  onPitchSave,
+  onNotesChange,
+  onNotesSave,
   onExport,
   isFindingCreators,
+  isExporting,
   message,
   onDismissMessage,
 }: {
@@ -584,14 +618,20 @@ function Workspace({
   onFindCreators: () => void;
   onStatusChange: (id: string, status: string) => void;
   onPitchChange: (id: string, pitch: string) => void;
+  onPitchSave: (id: string, pitch: string) => void;
+  onNotesChange: (id: string, notes: string) => void;
+  onNotesSave: (id: string, notes: string) => void;
   onExport: () => void;
   isFindingCreators: boolean;
+  isExporting: boolean;
   message: string;
   onDismissMessage: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("brief");
   const [selectedId, setSelectedId] = useState<string | null>(creators[0]?.creator_id ?? null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const jobSummary = jobSummaryFor(campaign);
+  const hasPendingJobs = jobSummary.pending > 0;
 
   const activeCreator = useMemo(
     () => creators.find((c) => c.creator_id === selectedId) ?? creators[0] ?? null,
@@ -607,13 +647,6 @@ function Workspace({
     { id: "export",    label: "Export",            icon: <Icon.export /> },
   ] as const;
 
-  const FINDER_LOGS = [
-    "Initializing discovery workers...",
-    "Querying vector database...",
-    "Computing alignment scores...",
-    "Drafting templates...",
-    "Complete",
-  ];
   const [finderLogIdx, setFinderLogIdx] = useState(0);
   useEffect(() => {
     if (!isFindingCreators) return;
@@ -773,28 +806,58 @@ function Workspace({
               <motion.div className="grid gap-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
                 <div>
                   <h2 className="text-xl font-semibold text-ink tracking-tight">Discovery Pipeline</h2>
-                  <p className="text-xs text-[#7a7a7a] mt-1 font-mono">Search vector database for matching creators.</p>
+                  <p className="text-xs text-[#7a7a7a] mt-1 font-mono">YouTube query discovery runs through the worker; shortlists rank cached/indexed creators.</p>
                 </div>
 
                 <div className="notebook-page p-6">
+                  <div className="grid gap-3 sm:grid-cols-4 mb-5">
+                    {([
+                      ["Queued", jobSummary.queued, "badge-amber"],
+                      ["Running", jobSummary.running, "badge-lavender"],
+                      ["Passed", jobSummary.passed, "badge-teal"],
+                      ["Failed", jobSummary.failed, "badge-coral"],
+                    ] as const).map(([label, value, badge]) => (
+                      <div key={label} className="rounded-xl border border-[#e8e4df] bg-white p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">{label}</p>
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-lg font-semibold text-ink font-mono">{value}</span>
+                          <span className={`badge-sticker ${badge} text-[9px] py-0`}>jobs</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
                     <div>
-                      <h3 className="text-sm font-semibold text-ink">Execute Search</h3>
+                      <h3 className="text-sm font-semibold text-ink">Build shortlist</h3>
                       <div className="flex flex-wrap gap-2 mt-3">
                         {[`goal:${campaign.goal}`, `geo:${campaign.geo}`, `platforms:${campaign.platforms.join(",")}`].map((t) => (
                           <span key={t} className="badge-sticker badge-teal text-[10px]">{t}</span>
                         ))}
                       </div>
+                      <p className="text-[11px] leading-relaxed text-[#7a7a7a] mt-3 max-w-xl">
+                        Instagram and TikTok are filters over cached/indexed profiles only. They are not live scraping providers until official adapters are added.
+                      </p>
                     </div>
                     <button
                       id="run-discovery-btn"
                       onClick={onFindCreators}
-                      disabled={isFindingCreators}
+                      disabled={isFindingCreators || hasPendingJobs}
                       className="glow-btn-accent px-6 py-2.5 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50 shrink-0"
+                      title={hasPendingJobs ? "Wait for queued/running discovery jobs before building a fresh shortlist." : undefined}
                     >
-                      {isFindingCreators ? "Running..." : "Run Discovery"}
+                      {isFindingCreators ? "Building..." : hasPendingJobs ? "Waiting on worker" : "Build shortlist"}
                     </button>
                   </div>
+
+                  {hasPendingJobs && (
+                    <div className="mt-5 rounded-lg border border-[#f0d9a6] bg-[#fdf0db] p-4">
+                      <p className="text-xs font-semibold text-[#b07920]">Discovery jobs are still queued or running.</p>
+                      <p className="text-[11px] leading-relaxed text-[#7a7a7a] mt-1">
+                        Start the worker to process fresh YouTube results, then build the shortlist. Existing cached creators remain available once jobs finish or fail.
+                      </p>
+                    </div>
+                  )}
 
                   {isFindingCreators && (
                     <div className="mt-6 rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-4 font-mono text-[10px]">
@@ -949,6 +1012,7 @@ function Workspace({
                               className="w-full h-28 rounded-lg border border-[#e8e4df] bg-white p-2.5 font-mono text-[10px] leading-relaxed text-ink resize-none focus:outline-none focus:border-[#c4bfb7] focus:shadow-sm transition-all"
                               value={activeCreator.recommended_pitch}
                               onChange={(e) => onPitchChange(activeCreator.creator_id, e.target.value)}
+                              onBlur={(e) => onPitchSave(activeCreator.creator_id, e.target.value)}
                             />
                             <div className="flex gap-2 mt-2">
                               <button
@@ -966,6 +1030,16 @@ function Workspace({
                                 )}
                               </button>
                             </div>
+                          </div>
+
+                          <div className="rounded-lg border border-[#e8e4df] bg-white p-3">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-2">Private Notes</p>
+                            <textarea
+                              className="w-full h-20 rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-2.5 font-mono text-[10px] leading-relaxed text-ink resize-none focus:outline-none focus:border-[#c4bfb7] focus:shadow-sm transition-all"
+                              value={activeCreator.notes ?? ""}
+                              onChange={(e) => onNotesChange(activeCreator.creator_id, e.target.value)}
+                              onBlur={(e) => onNotesSave(activeCreator.creator_id, e.target.value)}
+                            />
                           </div>
 
                           {/* Contact Details */}
@@ -1167,10 +1241,10 @@ function Workspace({
                   <button
                     id="export-csv-btn"
                     onClick={onExport}
-                    disabled={creators.length === 0}
+                    disabled={creators.length === 0 || isExporting}
                     className="glow-btn w-full rounded-xl py-3 text-sm font-semibold cursor-pointer disabled:opacity-50"
                   >
-                    Download CSV
+                    {isExporting ? "Creating export..." : "Create CSV Export"}
                   </button>
                 </div>
               </motion.div>
@@ -1185,21 +1259,15 @@ function Workspace({
 
 // ─── Root Component ────────────────────────────────────────────────────────────
 export default function Home() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<AuthUser>(null);
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [creators, setCreators] = useState<CampaignCreator[]>([]);
   const [apiHealth, setApiHealth] = useState<ApiHealth>("checking");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFindingCreators, setIsFindingCreators] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [message, setMessage] = useState("");
 
-  const CRAWLER_LOGS = [
-    "Resolving domain...",
-    "Crawling pages...",
-    "Extracting brand DNA...",
-    "Building campaign brief...",
-    "Done!",
-  ];
   const [crawlerLogIdx, setCrawlerLogIdx] = useState(0);
   useEffect(() => {
     if (!isAnalyzing) return;
@@ -1230,6 +1298,19 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    if (!campaign || jobSummaryFor(campaign).pending === 0) return;
+    const timer = setInterval(async () => {
+      try {
+        const refreshed = await api.getCampaign(campaign.id);
+        setCampaign(refreshed.data);
+      } catch (err) {
+        console.error("Campaign refresh failed:", err);
+      }
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [campaign]);
+
   async function handleSignOut() {
     try {
       const insforge = getInsForgeClient();
@@ -1247,7 +1328,8 @@ export default function Home() {
     try {
       const res = await api.createCampaign({ brand_url, goal, geo, platforms, provider: "youtube", query_limit: 5, per_query_limit: 10 });
       setCampaign(res.data.campaign);
-      setMessage(`Success: Extracted ${res.data.campaign.brief.brand_name || brand_url}`);
+      const summary = jobSummaryFor(res.data.campaign);
+      setMessage(`Success: queued ${summary.queued} discovery jobs for ${res.data.campaign.brief.brand_name || brand_url}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Error analyzing brand.");
     } finally {
@@ -1257,11 +1339,18 @@ export default function Home() {
 
   async function handleFindCreators() {
     if (!campaign) return;
+    const summary = jobSummaryFor(campaign);
+    if (summary.pending > 0) {
+      setMessage(`Wait for ${summary.pending} queued/running discovery jobs before building a fresh shortlist.`);
+      return;
+    }
     setIsFindingCreators(true);
     setMessage("");
     try {
       const res = await api.buildShortlist(campaign.id, { limit: 30 });
       setCreators(res.data.shortlist);
+      const refreshed = await api.getCampaign(campaign.id);
+      setCampaign(refreshed.data);
       setMessage(`Shortlisted ${res.data.shortlist.length} creators.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Discovery failed.");
@@ -1270,36 +1359,60 @@ export default function Home() {
     }
   }
 
-  function handleStatusChange(id: string, status: string) {
+  async function handleStatusChange(id: string, status: string) {
     setCreators((prev) => prev.map((c) => c.creator_id === id ? { ...c, status } : c));
+    if (!campaign) return;
+    try {
+      const updated = await api.updateCampaignCreator(campaign.id, id, { status });
+      setCreators((prev) => prev.map((c) => c.creator_id === id ? updated.data : c));
+      setMessage("Pipeline saved.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not save pipeline status.");
+    }
   }
 
   function handlePitchChange(id: string, pitch: string) {
     setCreators((prev) => prev.map((c) => c.creator_id === id ? { ...c, recommended_pitch: pitch } : c));
   }
 
-  function handleExport() {
+  async function handlePitchSave(id: string, pitch: string) {
     if (!campaign || !creators.length) return;
-    const rows = [
-      ["Creator", "Score", "Bucket", "Status", "Niche", "Location", "Platforms", "Contact", "Pitch"],
-      ...creators.map((item) => [
-        item.creator?.display_name ?? item.creator_id,
-        String(item.fit_score),
-        item.bucket,
-        item.status,
-        item.creator?.primary_niche ?? "",
-        item.creator?.location ?? "",
-        item.creator?.accounts.map((a) => a.platform).join("; ") ?? "",
-        item.creator?.contacts.map((c) => c.value).join("; ") ?? "",
-        item.recommended_pitch,
-      ]),
-    ];
-    const csv = rows.map((row) => row.map((c) => `"${String(c).replaceAll('"', '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `${campaign.brief.brand_name || "shortlist"}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const updated = await api.updateCampaignCreator(campaign.id, id, { recommended_pitch: pitch });
+      setCreators((prev) => prev.map((c) => c.creator_id === id ? updated.data : c));
+      setMessage("Pitch saved.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not save pitch.");
+    }
+  }
+
+  function handleNotesChange(id: string, notes: string) {
+    setCreators((prev) => prev.map((c) => c.creator_id === id ? { ...c, notes } : c));
+  }
+
+  async function handleNotesSave(id: string, notes: string) {
+    if (!campaign || !creators.length) return;
+    try {
+      const updated = await api.updateCampaignCreator(campaign.id, id, { notes });
+      setCreators((prev) => prev.map((c) => c.creator_id === id ? updated.data : c));
+      setMessage("Notes saved.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not save notes.");
+    }
+  }
+
+  async function handleExport() {
+    if (!campaign || !creators.length) return;
+    setIsExporting(true);
+    setMessage("");
+    try {
+      const exported = await api.exportCampaign(campaign.id);
+      setMessage(`CSV export saved: ${exported.data.storage_key}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setIsExporting(false);
+    }
   }
 
   if (isAnalyzing) {
@@ -1348,8 +1461,12 @@ export default function Home() {
         onFindCreators={handleFindCreators}
         onStatusChange={handleStatusChange}
         onPitchChange={handlePitchChange}
+        onPitchSave={handlePitchSave}
+        onNotesChange={handleNotesChange}
+        onNotesSave={handleNotesSave}
         onExport={handleExport}
         isFindingCreators={isFindingCreators}
+        isExporting={isExporting}
         message={message}
         onDismissMessage={() => setMessage("")}
       />
@@ -1367,4 +1484,3 @@ export default function Home() {
     </>
   );
 }
-

@@ -504,6 +504,80 @@ class DiscoveryService:
             },
         }
 
+    def update_campaign_creator(
+        self,
+        campaign_id: str,
+        creator_id: str,
+        payload: dict,
+        principal: ApiKeyPrincipal | None = None,
+    ) -> dict | None:
+        request_id = f"req_{uuid4().hex}"
+        if not any(key in payload for key in {"status", "recommended_pitch", "notes"}):
+            raise ValueError("At least one of status, recommended_pitch, or notes is required")
+        updated = self.campaign_service.update_campaign_creator(
+            campaign_id,
+            creator_id,
+            org_id=principal.org_id if principal else None,
+            status=payload.get("status") if "status" in payload else None,
+            recommended_pitch=payload.get("recommended_pitch") if "recommended_pitch" in payload else None,
+            notes=payload.get("notes") if "notes" in payload else None,
+        )
+        if not updated:
+            return None
+        return {
+            "data": updated,
+            "meta": {
+                "request_id": request_id,
+                "credits_used": 0.0,
+                "freshness": "fresh",
+                "confidence": updated.get("score_breakdown", {}).get("confidence") or 0.0,
+                "sources": [],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
+    def export_campaign_shortlist(
+        self,
+        campaign_id: str,
+        principal: ApiKeyPrincipal | None = None,
+    ) -> dict | None:
+        started = time.perf_counter()
+        request_id = f"req_{uuid4().hex}"
+        credits = 0.25
+        if principal:
+            assert_credit_available(self.store, principal, credits)
+        export = self.campaign_service.export_shortlist(
+            campaign_id,
+            org_id=principal.org_id if principal else None,
+        )
+        if export is None:
+            return None
+        if principal:
+            self.store.record_api_usage(
+                org_id=principal.org_id,
+                api_key_id=principal.api_key_id,
+                endpoint="/v1/campaigns/{campaign_id}/export",
+                request_id=request_id,
+                credits=credits,
+                status_code=200,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                result_count=int(export.get("row_count") or 0),
+                cache_status=Freshness.FRESH,
+            )
+        return {
+            "data": export,
+            "meta": {
+                "request_id": request_id,
+                "credits_used": credits,
+                "freshness": "fresh",
+                "confidence": 1.0,
+                "sources": [{"source_url": export.get("file_url"), "source_type": "campaign_export"}],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
 
 def _average_shortlist_confidence(shortlist: list[dict]) -> float:
     confidences = [

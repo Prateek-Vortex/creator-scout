@@ -1,6 +1,6 @@
 # Creator Scout Web
 
-Next.js dashboard for the Creator Scout AI Phase 1 MVP.
+Next.js dashboard for the Creator Scout AI Phase 1 MVP. The UI uses the warm cream Sticker Notebook design system from the repo root docs.
 
 ## Local Environment
 
@@ -13,9 +13,17 @@ NEXT_PUBLIC_INSFORGE_URL=https://ffqsewe5.ap-southeast.insforge.app
 NEXT_PUBLIC_INSFORGE_ANON_KEY=<insforge-anon-key>
 ```
 
-The local Python API still owns campaign creation, brand scans, shortlist scoring,
-and creator profile reads. InsForge SDK is wired for auth and future database, AI,
-and storage integration.
+Only public browser/auth values belong in `NEXT_PUBLIC_*`. Do not put `INSFORGE_API_KEY` in this file.
+
+The Python API and worker run as separate processes and require server-only env vars in their own shell or root `.env`:
+
+```bash
+INSFORGE_API_BASE_URL=https://ffqsewe5.ap-southeast.insforge.app
+INSFORGE_API_KEY=<server-api-key>
+YOUTUBE_API_KEY=<youtube-api-key>
+TINYFISH_API_KEY=<optional-tinyfish-key>
+FIRECRAWL_API_KEY=<optional-firecrawl-key>
+```
 
 ## Run
 
@@ -29,4 +37,5 @@ Open `http://localhost:3000`.
 
 The dashboard includes the MVP flow: new campaign, brand brief review, creator
 strategy, ranked results, profile drawer, outreach composer, CRM board, and CSV
-export.
+export. Campaign creation queues discovery jobs; fresh provider results appear
+after the separate worker processes queued/running jobs.

@@ -12,14 +12,13 @@ from creator_scout.discovery.store import DiscoveryStore
 def main() -> None:
     load_env()
     parser = argparse.ArgumentParser(description="Run Creator Scout discovery refresh jobs")
-    parser.add_argument("--db", default="data/creator_scout.sqlite3")
     parser.add_argument("--job-id")
     parser.add_argument("--loop", action="store_true", help="Keep polling for jobs")
     parser.add_argument("--interval", type=float, default=10.0, help="Seconds between polls when --loop is set")
     parser.add_argument("--max-jobs", type=int, default=0, help="Stop after N jobs; 0 means unlimited in loop mode")
     args = parser.parse_args()
 
-    store = DiscoveryStore(args.db)
+    store = DiscoveryStore()
     try:
         if args.job_id:
             output = run_job(store, args.job_id)

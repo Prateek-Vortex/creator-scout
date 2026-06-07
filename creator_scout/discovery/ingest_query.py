@@ -13,12 +13,11 @@ def main() -> None:
     parser.add_argument("query", help="Search query, e.g. 'skincare India acne routine'")
     parser.add_argument("--provider", default="youtube", choices=["youtube", "tinyfish"])
     parser.add_argument("--limit", type=int, default=10)
-    parser.add_argument("--db", default="data/creator_scout.sqlite3")
     parser.add_argument("--org-id", default="system")
     parser.add_argument("--enqueue-only", action="store_true")
     args = parser.parse_args()
 
-    store = DiscoveryStore(args.db)
+    store = DiscoveryStore()
     try:
         job_id = enqueue_discovery_query_job(
             store,

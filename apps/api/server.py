@@ -18,7 +18,6 @@ from creator_scout.discovery.store import DiscoveryStore  # noqa: E402
 
 
 load_env()
-DB_PATH = os.environ.get("CREATOR_SCOUT_DB", str(ROOT / "data" / "creator_scout.sqlite3"))
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -167,6 +166,17 @@ class ApiHandler(BaseHTTPRequestHandler):
                     return
                 self._send(200, response)
                 return
+            if path.startswith("/v1/campaigns/") and path.endswith("/export"):
+                if principal is None:
+                    self._send_error(401, "Missing or invalid API key")
+                    return
+                campaign_id = path.split("/")[-2]
+                response = self._service().export_campaign_shortlist(campaign_id, principal)
+                if response is None:
+                    self._send_error(404, "Campaign not found")
+                    return
+                self._send(200, response)
+                return
             if path == "/v1/discovery/refresh":
                 if principal is None:
                     self._send_error(401, "Missing or invalid API key")
@@ -198,6 +208,35 @@ class ApiHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             self._send_error(400, str(error))
 
+    def do_PATCH(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        principal = self._principal()
+        try:
+            payload = self._json_body()
+            if path.startswith("/v1/campaigns/") and "/creators/" in path:
+                if principal is None:
+                    self._send_error(401, "Missing or invalid API key")
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 5 or parts[:2] != ["v1", "campaigns"] or parts[3] != "creators":
+                    self._send_error(404, "Route not found")
+                    return
+                campaign_id = parts[2]
+                creator_id = parts[4]
+                response = self._service().update_campaign_creator(campaign_id, creator_id, payload, principal)
+                if response is None:
+                    self._send_error(404, "Campaign creator not found")
+                    return
+                self._send(200, response)
+                return
+            self._send_error(404, "Route not found")
+        except PermissionError as error:
+            self._send_error(402, str(error))
+        except json.JSONDecodeError:
+            self._send_error(400, "Invalid JSON body")
+        except ValueError as error:
+            self._send_error(400, str(error))
+
     def log_message(self, format: str, *args) -> None:  # noqa: A003
         if os.environ.get("CREATOR_SCOUT_HTTP_LOGS") == "1":
             super().log_message(format, *args)
@@ -205,7 +244,7 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 def create_server(host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), ApiHandler)
-    server.store = DiscoveryStore(DB_PATH)  # type: ignore[attr-defined]
+    server.store = DiscoveryStore()  # type: ignore[attr-defined]
     server.service = DiscoveryService(server.store)  # type: ignore[attr-defined]
     return server
 

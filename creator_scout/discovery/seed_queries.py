@@ -12,7 +12,6 @@ from creator_scout.discovery.store import DiscoveryStore
 def main() -> None:
     load_env()
     parser = argparse.ArgumentParser(description="Queue a batch of discovery query jobs")
-    parser.add_argument("--db", default="data/creator_scout.sqlite3")
     parser.add_argument("--queries", default="data/seed_queries.json")
     parser.add_argument("--org-id", default="system")
     parser.add_argument("--provider", help="Only queue specs for this provider")
@@ -20,7 +19,7 @@ def main() -> None:
     args = parser.parse_args()
 
     query_specs = json.loads(Path(args.queries).read_text(encoding="utf-8"))
-    store = DiscoveryStore(args.db)
+    store = DiscoveryStore()
     queued = []
     try:
         for spec in query_specs:

@@ -140,7 +140,7 @@ export default function SignInPage() {
 
         {/* Footer link */}
         <p className="mt-6 text-center text-xs text-muted">
-          Don't have an account?{" "}
+            Don&apos;t have an account?{" "}
           <Link className="font-medium text-white hover:underline transition-colors" href="/sign-up">
             Sign up
           </Link>

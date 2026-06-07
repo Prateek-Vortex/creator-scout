@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import io
+
 from creator_scout.brand.service import BrandScanService
 from creator_scout.discovery.jobs import enqueue_discovery_query_job
 from creator_scout.discovery.models import Platform, SearchResult, to_jsonable
@@ -8,6 +11,7 @@ from creator_scout.discovery.store import DiscoveryStore, to_uuid
 
 
 DEFAULT_CAMPAIGN_PLATFORMS = ["youtube", "instagram", "tiktok"]
+EXPORT_BUCKET = "campaign-exports"
 
 
 class CampaignService:
@@ -241,6 +245,7 @@ Do not include any formatting or conversational filler, just the JSON."""
             "campaign_id": campaign_id,
             "shortlist": self.list_shortlist(campaign_id, org_id=org_id, limit=limit),
             "candidate_count": len(candidates),
+            "job_summary": campaign.get("job_summary") or {},
         }
 
     def list_shortlist(self, campaign_id: str, *, org_id: str | None = None, limit: int = 50) -> list[dict]:
@@ -270,6 +275,60 @@ Do not include any formatting or conversational filler, just the JSON."""
         row_order = {row["creator_id"]: i for i, row in enumerate(rows)}
         hydrated.sort(key=lambda r: row_order.get((r.get("creator") or {}).get("creator_id", ""), 999))
         return hydrated
+
+    def update_campaign_creator(
+        self,
+        campaign_id: str,
+        creator_id: str,
+        *,
+        org_id: str | None = None,
+        status: str | None = None,
+        recommended_pitch: str | None = None,
+        notes: str | None = None,
+    ) -> dict | None:
+        campaign = self.get_campaign(campaign_id, org_id=org_id)
+        if not campaign:
+            return None
+        fields: dict[str, object] = {}
+        if status is not None:
+            if status not in _valid_crm_statuses():
+                raise ValueError("Unsupported CRM status")
+            fields["status"] = status
+        if recommended_pitch is not None:
+            fields["recommended_pitch"] = recommended_pitch
+        if notes is not None:
+            fields["notes"] = notes
+        updated = self.store.update_campaign_creator(campaign_id, creator_id, fields)
+        if not updated:
+            return None
+        creator = self.store.get_creator(creator_id)
+        cleaned = _clean_shortlist_row(updated)
+        cleaned["creator"] = to_jsonable(creator) if creator else None
+        return cleaned
+
+    def export_shortlist(self, campaign_id: str, *, org_id: str | None = None) -> dict | None:
+        campaign = self.get_campaign(campaign_id, org_id=org_id)
+        if not campaign:
+            return None
+        shortlist = self.list_shortlist(campaign_id, org_id=org_id, limit=100)
+        csv_text = _shortlist_csv(shortlist)
+        timestamp = utc_export_timestamp()
+        key = f"campaigns/{campaign_id}/exports/{timestamp}.csv"
+        uploaded = self.store.upload_storage_object(
+            bucket=EXPORT_BUCKET,
+            key=key,
+            content=csv_text.encode("utf-8"),
+            content_type="text/csv;charset=utf-8",
+        )
+        file_url = uploaded.get("url") or f"{self.store.url}/api/storage/buckets/{EXPORT_BUCKET}/objects/{key}"
+        export = self.store.create_campaign_export(
+            org_id=campaign.get("org_id"),
+            campaign_id=campaign_id,
+            storage_key=uploaded.get("key") or key,
+            file_url=file_url,
+            row_count=len(shortlist),
+        )
+        return export
 
     def _rank_campaign_candidates(
         self,
@@ -391,3 +450,49 @@ def _clean_shortlist_row(row: dict) -> dict:
     cleaned.pop("risks_json", None)
     cleaned.pop("unknowns_json", None)
     return cleaned
+
+
+def _valid_crm_statuses() -> set[str]:
+    return {"shortlisted", "contacted", "replied", "negotiating", "accepted", "content_pending", "live", "done"}
+
+
+def _shortlist_csv(shortlist: list[dict]) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "Creator",
+            "Score",
+            "Bucket",
+            "Status",
+            "Niche",
+            "Location",
+            "Platforms",
+            "Contact",
+            "Pitch",
+            "Notes",
+        ]
+    )
+    for item in shortlist:
+        creator = item.get("creator") or {}
+        writer.writerow(
+            [
+                creator.get("display_name") or item.get("creator_id"),
+                item.get("fit_score"),
+                item.get("bucket"),
+                item.get("status"),
+                creator.get("primary_niche") or "",
+                creator.get("location") or "",
+                "; ".join(account.get("platform", "") for account in creator.get("accounts", [])),
+                "; ".join(contact.get("value", "") for contact in creator.get("contacts", [])),
+                item.get("recommended_pitch") or "",
+                item.get("notes") or "",
+            ]
+        )
+    return output.getvalue()
+
+
+def utc_export_timestamp() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

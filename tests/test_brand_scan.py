@@ -69,7 +69,7 @@ class TestCrawler(BrandCrawler):
 class BrandScanTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = DiscoveryStore(Path(self.tmp.name) / "brand.sqlite3")
+        self.store = DiscoveryStore(Path(self.tmp.name) / "brand-store-arg-ignored")
 
     def tearDown(self) -> None:
         self.store.close()
@@ -132,4 +132,3 @@ class BrandScanTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

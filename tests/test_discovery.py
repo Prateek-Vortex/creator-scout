@@ -19,7 +19,7 @@ SEED_PATH = Path(__file__).resolve().parents[1] / "data" / "seed_creators.json"
 class DiscoveryTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = DiscoveryStore(Path(self.tmp.name) / "test.sqlite3")
+        self.store = DiscoveryStore(Path(self.tmp.name) / "store-arg-ignored")
         records = json.loads(SEED_PATH.read_text(encoding="utf-8"))
         self.creator_ids = ingest_records(self.store, records)
 
@@ -116,7 +116,7 @@ class DiscoveryTestCase(unittest.TestCase):
         self.assertEqual(job["input"]["provider"], "youtube")
         self.assertEqual(self.store.current_credit_usage("org_query"), 1.0)
 
-    def test_job_status_and_retry_are_org_scoped(self) -> None:
+    def test_job_retry_backoff_and_terminal_failure_are_org_scoped(self) -> None:
         _, api_key = provision_api_key(
             self.store,
             org_id="org_jobs",
@@ -130,12 +130,29 @@ class DiscoveryTestCase(unittest.TestCase):
             principal,
         )
         job_id = created["data"]["job_id"]
+        self.store.mark_discovery_job_running(job_id)
         self.store.mark_discovery_job_failed(job_id, "temporary failure")
 
         status = service.job_status(job_id, principal)
-        self.assertEqual(status["data"]["status"], "failed")
+        self.assertEqual(status["data"]["status"], "queued")
+        self.assertEqual(status["data"]["attempt_count"], 1)
+        self.assertIsNotNone(status["data"]["next_run_at"])
+        self.assertIsNone(self.store.next_discovery_job())
+
+        self.store.mark_discovery_job_running(job_id)
+        self.store.mark_discovery_job_failed(job_id, "temporary failure")
+        self.store.mark_discovery_job_running(job_id)
+        self.store.mark_discovery_job_failed(job_id, "permanent failure")
+
+        failed = service.job_status(job_id, principal)
+        self.assertEqual(failed["data"]["status"], "failed")
+        self.assertEqual(failed["data"]["attempt_count"], 3)
+        self.assertEqual(failed["data"]["error"], "permanent failure")
+        self.assertIsNone(failed["data"]["next_run_at"])
+
         retried = service.retry_job(job_id, principal)
         self.assertEqual(retried["data"]["status"], "queued")
+        self.assertEqual(retried["data"]["attempt_count"], 0)
         self.assertIsNone(retried["data"]["error"])
 
 

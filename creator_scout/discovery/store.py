@@ -1,8 +1,11 @@
 import os
 import requests
 import sys
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import quote
 from typing import Any
 
 from creator_scout.discovery.models import (
@@ -20,6 +23,8 @@ from creator_scout.discovery.normalize import stable_id
 
 IN_TEST = "unittest" in sys.modules or "pytest" in sys.modules or (len(sys.argv) > 0 and "pytest" in sys.argv[0])
 UUID_TO_ORIGINAL = {}
+_PUBLIC_INSFORGE_FALLBACK_WARNED = False
+_RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 
 def to_uuid(val: Any) -> str | None:
@@ -84,19 +89,53 @@ class DiscoveryStore:
         # Load environment variables if they aren't loaded
         from creator_scout.config import load_env
         load_env()
-        self.url = os.environ.get("NEXT_PUBLIC_INSFORGE_URL")
-        self.anon_key = os.environ.get("NEXT_PUBLIC_INSFORGE_ANON_KEY")
-        if not self.url or not self.anon_key:
-            raise RuntimeError("Missing InsForge configuration in environment variables.")
+        self.url = (
+            os.environ.get("INSFORGE_API_BASE_URL")
+            or os.environ.get("INSFORGE_URL")
+            or os.environ.get("NEXT_PUBLIC_INSFORGE_URL")
+        )
+        self.api_key = os.environ.get("INSFORGE_API_KEY") or os.environ.get("INSFORGE_SERVICE_KEY")
+        using_public_fallback = False
+        if not self.api_key:
+            self.api_key = os.environ.get("NEXT_PUBLIC_INSFORGE_ANON_KEY")
+            using_public_fallback = bool(self.api_key)
+        if not self.url or not self.api_key:
+            raise RuntimeError(
+                "Missing InsForge configuration. Set INSFORGE_API_BASE_URL and INSFORGE_API_KEY for server code."
+            )
         self.url = self.url.rstrip("/")
+        self.anon_key = self.api_key
+        if using_public_fallback:
+            self._warn_public_key_fallback()
         if IN_TEST:
             self.clear_database()
 
+    def _warn_public_key_fallback(self) -> None:
+        global _PUBLIC_INSFORGE_FALLBACK_WARNED
+        if _PUBLIC_INSFORGE_FALLBACK_WARNED:
+            return
+        print(
+            "[store] WARNING: using NEXT_PUBLIC_INSFORGE_ANON_KEY for server persistence. "
+            "Set INSFORGE_API_BASE_URL and INSFORGE_API_KEY; public keys will not work after backend hardening.",
+            file=sys.stderr,
+        )
+        _PUBLIC_INSFORGE_FALLBACK_WARNED = True
+
     def clear_database(self) -> None:
         try:
-            self._request("DELETE", "/api/database/records/creator_profiles")
+            self._request("DELETE", "/api/database/records/outreach_messages")
+            self._request("DELETE", "/api/database/records/campaign_exports")
+            self._request("DELETE", "/api/database/records/campaign_creators")
+            self._request("DELETE", "/api/database/records/campaign_discovery_jobs")
+            self._request("DELETE", "/api/database/records/provider_requests")
+            self._request("DELETE", "/api/database/records/discovery_jobs")
+            self._request("DELETE", "/api/database/records/brand_pages")
             self._request("DELETE", "/api/database/records/campaigns")
             self._request("DELETE", "/api/database/records/brands")
+            self._request("DELETE", "/api/database/records/creator_index_sources")
+            self._request("DELETE", "/api/database/records/creator_contacts")
+            self._request("DELETE", "/api/database/records/creator_accounts")
+            self._request("DELETE", "/api/database/records/creator_profiles")
             self._request("DELETE", "/api/database/records/api_usage_events")
             self._request("DELETE", "/api/database/records/api_credit_ledger")
             self._request("DELETE", "/api/database/records/developer_api_keys")
@@ -143,13 +182,38 @@ class DiscoveryStore:
 
     def _headers(self, custom: dict | None = None) -> dict:
         h = {
-            "Authorization": f"Bearer {self.anon_key}",
-            "apikey": self.anon_key,
+            "Authorization": f"Bearer {self.api_key}",
+            "apikey": self.api_key,
             "Content-Type": "application/json",
         }
         if custom:
             h.update(custom)
         return h
+
+    def _send_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        attempts = 5
+        for attempt in range(attempts):
+            response = requests.request(method, url, **kwargs)
+            if response.status_code not in _RETRYABLE_HTTP_STATUSES or attempt == attempts - 1:
+                return response
+            retry_after = response.headers.get("Retry-After")
+            try:
+                delay = float(retry_after) if retry_after else 0.75 * (2 ** attempt)
+            except ValueError:
+                delay = 0.75 * (2 ** attempt)
+            time.sleep(min(delay, 8.0))
+        return response
+
+    def _post_records(self, path: str, records: list[dict], *, prefer: str, timeout: int) -> None:
+        response = self._send_request(
+            "POST",
+            f"{self.url}{path}",
+            json=records,
+            headers=self._headers({"Prefer": prefer}),
+            timeout=timeout,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"InsForge REST request failed: {response.status_code} - {response.text}")
 
     def _request(self, method: str, path: str, json_data: Any = None, params: dict = None, headers: dict = None, timeout: int = 30) -> Any:
         path = _normalize_path(path)
@@ -183,108 +247,89 @@ class DiscoveryStore:
             org_ids = list(set(org_ids))
             campaign_ids = list(set(campaign_ids))
             api_key_ids = list(set(api_key_ids))
-            
+
             if "/organizations" not in path:
                 for oid in org_ids:
-                    try:
-                        url_org = f"{self.url}/api/database/records/organizations"
-                        requests.post(
-                            url_org,
-                            json=[{"id": oid, "name": f"Team {oid}", "plan": "free"}],
-                            headers=self._headers({"Prefer": "resolution=ignore-duplicates"}),
-                            timeout=timeout
-                        )
-                    except Exception:
-                        pass
-            
+                    self._post_records(
+                        "/api/database/records/organizations",
+                        [{"id": oid, "name": f"Team {oid}", "plan": "free"}],
+                        prefer="resolution=ignore-duplicates",
+                        timeout=timeout,
+                    )
+
             if "/developer_api_keys" not in path:
                 for kid in api_key_ids:
                     default_org = org_ids[0] if org_ids else to_uuid("org_test")
                     if "/organizations" not in path:
-                        try:
-                            requests.post(
-                                f"{self.url}/api/database/records/organizations",
-                                json=[{"id": default_org, "name": f"Team {default_org}", "plan": "free"}],
-                                headers=self._headers({"Prefer": "resolution=ignore-duplicates"}),
-                                timeout=timeout
-                            )
-                        except Exception:
-                            pass
-                    
-                    try:
-                        requests.post(
-                            f"{self.url}/api/database/records/developer_api_keys",
-                            json=[{
-                                "id": kid,
-                                "org_id": default_org,
-                                "name": "Dummy Key",
-                                "key_hash": f"dummy_hash_{kid}",
-                                "scopes": ["discovery:read", "discovery:write"],
-                                "rate_limit_per_minute": 60,
-                                "monthly_credit_limit": 1000.0,
-                            }],
-                            headers=self._headers({"Prefer": "resolution=ignore-duplicates"}),
-                            timeout=timeout
+                        self._post_records(
+                            "/api/database/records/organizations",
+                            [{"id": default_org, "name": f"Team {default_org}", "plan": "free"}],
+                            prefer="resolution=ignore-duplicates",
+                            timeout=timeout,
                         )
-                    except Exception:
-                        pass
+
+                    self._post_records(
+                        "/api/database/records/developer_api_keys",
+                        [{
+                            "id": kid,
+                            "org_id": default_org,
+                            "name": "Dummy Key",
+                            "key_hash": f"dummy_hash_{kid}",
+                            "scopes": ["discovery:read", "discovery:write"],
+                            "rate_limit_per_minute": 60,
+                            "monthly_credit_limit": 1000.0,
+                        }],
+                        prefer="resolution=ignore-duplicates",
+                        timeout=timeout,
+                    )
 
             if "/campaigns" not in path:
                 for cid in campaign_ids:
                     default_org = org_ids[0] if org_ids else to_uuid("org_test")
                     if "/organizations" not in path:
-                        try:
-                            requests.post(
-                                f"{self.url}/api/database/records/organizations",
-                                json=[{"id": default_org, "name": f"Team {default_org}", "plan": "free"}],
-                                headers=self._headers({"Prefer": "resolution=ignore-duplicates"}),
-                                timeout=timeout
-                            )
-                        except Exception:
-                            pass
-                    
+                        self._post_records(
+                            "/api/database/records/organizations",
+                            [{"id": default_org, "name": f"Team {default_org}", "plan": "free"}],
+                            prefer="resolution=ignore-duplicates",
+                            timeout=timeout,
+                        )
+
                     dummy_brand_id = to_uuid("dummy_brand")
                     if "/brands" not in path:
-                        try:
-                            requests.post(
-                                f"{self.url}/api/database/records/brands",
-                                json=[{
-                                    "id": dummy_brand_id,
-                                    "org_id": default_org,
-                                    "website_url": "https://dummybrand.com",
-                                    "name": "Dummy Brand",
-                                    "brief_json": {},
-                                    "confidence": 1.0,
-                                }],
-                                headers=self._headers({"Prefer": "resolution=ignore-duplicates"}),
-                                timeout=timeout
-                            )
-                        except Exception:
-                            pass
-                    
-                    try:
-                        requests.post(
-                            f"{self.url}/api/database/records/campaigns",
-                            json=[{
-                                "id": cid,
+                        self._post_records(
+                            "/api/database/records/brands",
+                            [{
+                                "id": dummy_brand_id,
                                 "org_id": default_org,
-                                "brand_id": dummy_brand_id,
-                                "brand_url": "https://dummybrand.com",
-                                "goal": "ugc",
-                                "geography": "India",
-                                "platforms": [],
-                                "status": "draft",
+                                "website_url": "https://dummybrand.com",
+                                "name": "Dummy Brand",
                                 "brief_json": {},
-                                "search_queries": []
+                                "confidence": 1.0,
                             }],
-                            headers=self._headers({"Prefer": "resolution=ignore-duplicates"}),
-                            timeout=timeout
+                            prefer="resolution=ignore-duplicates",
+                            timeout=timeout,
                         )
-                    except Exception:
-                        pass
+
+                    self._post_records(
+                        "/api/database/records/campaigns",
+                        [{
+                            "id": cid,
+                            "org_id": default_org,
+                            "brand_id": dummy_brand_id,
+                            "brand_url": "https://dummybrand.com",
+                            "goal": "ugc",
+                            "geography": "India",
+                            "platforms": [],
+                            "status": "draft",
+                            "brief_json": {},
+                            "search_queries": []
+                        }],
+                        prefer="resolution=ignore-duplicates",
+                        timeout=timeout,
+                    )
 
         url = f"{self.url}{path}"
-        r = requests.request(method, url, json=json_data, params=params, headers=self._headers(headers), timeout=timeout)
+        r = self._send_request(method, url, json=json_data, params=params, headers=self._headers(headers), timeout=timeout)
         if r.status_code >= 400:
             raise RuntimeError(f"InsForge REST request failed: {r.status_code} - {r.text}")
         if r.status_code == 204:
@@ -728,7 +773,7 @@ class DiscoveryStore:
             return None
         pages = self._request("GET", f"/api/database/records/brand_pages?brand_id=eq.{brand_id}")
         brand = rows[0]
-        # Re-map back to SQLite brief dict output format
+        # Re-map storage fields back to the API's brief dict shape.
         brief = brand.get("brief_json") or {}
         return {
             "id": brand["id"],
@@ -839,6 +884,7 @@ class DiscoveryStore:
                 }
             hydrated_jobs.append(job_dict)
 
+        job_summary = summarize_job_statuses(hydrated_jobs)
         brief = campaign.get("brief_json") or {}
         return {
             "id": campaign["id"],
@@ -854,6 +900,7 @@ class DiscoveryStore:
             "brief": brief,
             "search_queries": campaign["search_queries"] or [],
             "jobs": hydrated_jobs,
+            "job_summary": job_summary,
         }
 
     def update_campaign_status(self, campaign_id: str, status: str) -> None:
@@ -920,6 +967,123 @@ class DiscoveryStore:
         )
         return rows
 
+    def update_campaign_creator(self, campaign_id: str, creator_id: str, fields: dict) -> dict | None:
+        allowed = {"status", "recommended_pitch", "notes"}
+        patch = {key: value for key, value in fields.items() if key in allowed}
+        if not patch:
+            return self.get_campaign_creator(campaign_id, creator_id)
+        patch["updated_at"] = utc_now()
+        self._request(
+            "PATCH",
+            f"/api/database/records/campaign_creators?campaign_id=eq.{campaign_id}&creator_id=eq.{creator_id}",
+            json_data=patch,
+        )
+        return self.get_campaign_creator(campaign_id, creator_id)
+
+    def get_campaign_creator(self, campaign_id: str, creator_id: str) -> dict | None:
+        rows = self._request(
+            "GET",
+            f"/api/database/records/campaign_creators?campaign_id=eq.{campaign_id}&creator_id=eq.{creator_id}&limit=1",
+        )
+        return rows[0] if rows else None
+
+    def create_campaign_export(
+        self,
+        *,
+        org_id: str | None,
+        campaign_id: str,
+        storage_key: str,
+        file_url: str,
+        row_count: int,
+    ) -> dict:
+        now = utc_now()
+        export_id = stable_id("cex", campaign_id, storage_key)
+        export_data = {
+            "id": export_id,
+            "org_id": org_id,
+            "campaign_id": campaign_id,
+            "storage_key": storage_key,
+            "file_url": file_url,
+            "row_count": row_count,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._request(
+            "POST",
+            "/api/database/records/campaign_exports",
+            json_data=[export_data],
+            headers={"Prefer": "resolution=merge-duplicates"},
+        )
+        return export_data
+
+    def upload_storage_object(
+        self,
+        *,
+        bucket: str,
+        key: str,
+        content: bytes,
+        content_type: str,
+    ) -> dict:
+        strategy = self._request(
+            "POST",
+            f"/api/storage/buckets/{bucket}/upload-strategy",
+            json_data={
+                "filename": key,
+                "contentType": content_type,
+                "size": len(content),
+            },
+        )
+        filename = key.rsplit("/", 1)[-1] or "export.csv"
+        if strategy.get("method") == "direct":
+            headers = self._headers()
+            headers.pop("Content-Type", None)
+            response = requests.put(
+                f"{self.url}/api/storage/buckets/{bucket}/objects/{quote(key, safe='')}",
+                files={"file": (filename, content, content_type)},
+                headers=headers,
+                timeout=30,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"InsForge storage upload failed: {response.status_code} - {response.text}")
+            return response.json()
+        if strategy.get("method") == "presigned":
+            response = requests.post(
+                strategy["uploadUrl"],
+                data=strategy.get("fields") or {},
+                files={"file": (filename, content, content_type)},
+                timeout=30,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"InsForge presigned upload failed: {response.status_code} - {response.text}")
+            if strategy.get("confirmRequired") and strategy.get("confirmUrl"):
+                confirm_url = strategy["confirmUrl"]
+                if confirm_url.startswith("http"):
+                    confirm_response = requests.post(
+                        confirm_url,
+                        json={"size": len(content), "contentType": content_type},
+                        headers=self._headers(),
+                        timeout=30,
+                    )
+                    if confirm_response.status_code >= 400:
+                        raise RuntimeError(
+                            f"InsForge storage confirm failed: {confirm_response.status_code} - {confirm_response.text}"
+                        )
+                    return confirm_response.json()
+                return self._request(
+                    "POST",
+                    confirm_url,
+                    json_data={"size": len(content), "contentType": content_type},
+                )
+            return {
+                "key": strategy["key"],
+                "bucket": bucket,
+                "size": len(content),
+                "mimeType": content_type,
+                "uploadedAt": utc_now(),
+                "url": f"{self.url}/api/storage/buckets/{bucket}/objects/{quote(strategy['key'], safe='')}",
+            }
+        raise RuntimeError(f"Unsupported InsForge storage upload method: {strategy.get('method')}")
+
     def create_discovery_job(
         self,
         *,
@@ -939,6 +1103,11 @@ class DiscoveryStore:
             "status": "queued",
             "input": input_payload,
             "output": {},
+            "attempt_count": 0,
+            "max_attempts": 3,
+            "next_run_at": None,
+            "locked_at": None,
+            "locked_by": None,
             "created_at": utc_now(),
         }
         self._request("POST", "/api/database/records/discovery_jobs", json_data=[job_data])
@@ -953,31 +1122,63 @@ class DiscoveryStore:
     def next_discovery_job(self) -> dict | None:
         rows = self._request(
             "GET",
-            "/api/database/records/discovery_jobs?status=eq.queued&order=created_at.asc&limit=1",
+            "/api/database/records/discovery_jobs?status=eq.queued&order=created_at.asc&limit=20",
         )
-        if not rows:
-            return None
-        return rows[0]
+        now = datetime.now(timezone.utc)
+        for row in rows:
+            next_run_at = _parse_datetime(row.get("next_run_at"))
+            if next_run_at is None or next_run_at <= now:
+                return row
+        return None
 
     def mark_discovery_job_running(self, job_id: str) -> None:
+        job = self.get_discovery_job(job_id) or {}
+        attempt_count = int(job.get("attempt_count") or 0) + 1
+        worker_id = os.environ.get("CREATOR_SCOUT_WORKER_ID") or os.environ.get("HOSTNAME") or "worker-local"
         self._request(
             "PATCH",
             f"/api/database/records/discovery_jobs?id=eq.{job_id}",
-            json_data={"status": "running", "started_at": utc_now()},
+            json_data={
+                "status": "running",
+                "attempt_count": attempt_count,
+                "started_at": utc_now(),
+                "locked_at": utc_now(),
+                "locked_by": worker_id,
+            },
         )
 
     def mark_discovery_job_finished(self, job_id: str, output: dict) -> None:
         self._request(
             "PATCH",
             f"/api/database/records/discovery_jobs?id=eq.{job_id}",
-            json_data={"status": "passed", "output": output, "finished_at": utc_now()},
+            json_data={
+                "status": "passed",
+                "output": output,
+                "error": None,
+                "next_run_at": None,
+                "locked_at": None,
+                "locked_by": None,
+                "finished_at": utc_now(),
+            },
         )
 
     def mark_discovery_job_failed(self, job_id: str, error: str) -> None:
+        job = self.get_discovery_job(job_id) or {}
+        attempt_count = int(job.get("attempt_count") or 0)
+        max_attempts = max(1, int(job.get("max_attempts") or 3))
+        terminal = attempt_count >= max_attempts
+        retry_at = _seconds_from_now(_retry_backoff_seconds(attempt_count)) if not terminal else None
         self._request(
             "PATCH",
             f"/api/database/records/discovery_jobs?id=eq.{job_id}",
-            json_data={"status": "failed", "error": error, "finished_at": utc_now()},
+            json_data={
+                "status": "failed" if terminal else "queued",
+                "error": error,
+                "next_run_at": retry_at,
+                "locked_at": None,
+                "locked_by": None,
+                "finished_at": utc_now() if terminal else None,
+            },
         )
 
     def retry_discovery_job(self, job_id: str) -> dict | None:
@@ -991,8 +1192,41 @@ class DiscoveryStore:
                 "status": "queued",
                 "output": {},
                 "error": None,
+                "attempt_count": 0,
+                "next_run_at": None,
+                "locked_at": None,
+                "locked_by": None,
                 "started_at": None,
                 "finished_at": None,
             },
         )
         return self.get_discovery_job(job_id)
+
+
+def summarize_job_statuses(jobs: list[dict]) -> dict:
+    summary = {"queued": 0, "running": 0, "passed": 0, "failed": 0}
+    for job in jobs:
+        status = str(job.get("status") or "queued")
+        if status in summary:
+            summary[status] += 1
+    summary["pending"] = summary["queued"] + summary["running"]
+    summary["total"] = sum(summary[key] for key in ("queued", "running", "passed", "failed"))
+    return summary
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _seconds_from_now(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _retry_backoff_seconds(attempt_count: int) -> int:
+    attempt = max(1, attempt_count)
+    return min(3600, 30 * (2 ** min(attempt - 1, 6)))

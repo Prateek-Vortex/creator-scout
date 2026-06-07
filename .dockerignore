@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+!.env.example
+.insforge
+apps/web/node_modules
+apps/web/.next
+node_modules
+__pycache__
+*.pyc
+.pytest_cache
+.DS_Store

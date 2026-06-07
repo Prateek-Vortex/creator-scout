@@ -1,46 +1,27 @@
-# Creator Scout AI — UI Redesign & Brand Alignment Plan
+# Creator Scout Implementation Plan
 
-We will overhaul the user interface of Creator Scout AI to make it feel premium, modern, and sassy, aligning with best-in-class SaaS platforms. 
+`docs/current_state_and_gaps.md` is the current-state source of truth. This file replaces the older dark/neon UI redesign plan, which is obsolete.
 
-We will transition the dashboard from a simple stacked page list to a multi-state workspace:
-1. **Interactive Landing & Hero Page**: Introducing a bold, high-end landing page to capture the user's focus on first load.
-2. **Sleek Tabbed Dashboard**: Organizing campaign actions into clean visual tabs (Brief, Strategy, Shortlist, Outreach, CRM, Export).
-3. **Midnight Violet & Teal Glow Theme**: A beautiful dark-theme layout using CSS variables, blur filters (glassmorphism), and neon accent gradients.
-4. **Interactive Micro-interactions**: Adding visual crawler progress logs, smooth hover states, and slide-in drawer animations.
+## Active Direction
 
----
+- Keep the warm cream Sticker Notebook UI defined in `DESIGN_SYSTEM.md` and `.gemini/ui-skills.md`.
+- Use InsForge as the only backend store.
+- Run API, web, and worker as separate processes locally.
+- Keep YouTube as the default query-discovery provider.
+- Keep TinyFish as an explicit allowed public search-result discovery provider.
+- Keep Firecrawl and `public_web` for explicit URL refresh/enrichment.
+- Do not add unauthorized Instagram, TikTok, LinkedIn, or Facebook scraping.
 
-## Proposed Changes
+## Current Priorities
 
-### [Component Name] Frontend Layout & Design System
+1. Stabilize campaign UX around queued/running discovery jobs.
+2. Harden InsForge schema, grants, RLS posture, and server-only env handling.
+3. Run one managed discovery worker with retry/backoff fields.
+4. Persist CRM edits and CSV export metadata.
+5. Keep outreach sending out of scope until suppression, unsubscribe, sender verification, and compliance controls exist.
 
-#### [MODIFY] [globals.css](file:///Users/prateeksaxena/Developer/projects/Ai%20content%20creator%20matching/apps/web/src/app/globals.css)
-- Revise theme variables to introduce a dark-mode base color system:
-  - Deep space base: `#090d16`
-  - Card/Panel base: `rgba(17, 24, 39, 0.7)` (with blur)
-  - Neon purple accent: `#a855f7`
-  - Neon cyan/teal accent: `#06b6d4`
-  - Custom animations (`fade-in-up`, `gradient-flow`).
+## Verification
 
-#### [MODIFY] [page.tsx](file:///Users/prateeksaxena/Developer/projects/Ai%20content%20creator%20matching/apps/web/src/app/page.tsx)
-- Restructure the UI into two core states:
-  - **Landing State**: Sassy copywriting, prominent URL input box with a glowing purple outline, platform selector tags, and geo tags.
-  - **Workspace State**: Side-navigation layout managing a tab-focused view:
-    - **Tab 1: Brand Brief**: Extracted categories, values, and crawler evidence URLs in card grids.
-    - **Tab 2: Creator Strategy**: Campaign filters, platforms, and find triggers.
-    - **Tab 3: Shortlisted Matches**: Table view highlighting creator scores and why they fit.
-    - **Tab 4: Outreach Composer**: Double-pane workspace showing selected creator info, compliance flags, and editable email pitch.
-    - **Tab 5: CRM Kanban Board**: Multi-column board displaying pipeline cards (replied, accepted, content live).
-    - **Tab 6: Export & Integrations**: CSV export interface.
-- Add dynamic progress step animations when scanning a brand URL.
-
----
-
-## Verification Plan
-
-### Manual Verification
-- Launch both servers and verify:
-  1. Responsive layout of the new landing page.
-  2. Tab switching without losing loaded campaign states.
-  3. Interactive drawer opening on creator click.
-  4. Glowing borders and micro-interactions on hover.
+- Audit live InsForge schema before migration.
+- Apply schema changes on an InsForge branch first.
+- Smoke-test API auth, campaign reads, job summaries, shortlist building, CRM persistence, and export persistence before merging backend changes to the parent project.

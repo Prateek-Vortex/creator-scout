@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 from creator_scout.config import load_env
@@ -49,11 +50,15 @@ def main() -> None:
     parser.add_argument("--seed", default="data/seed_creators.json")
     args = parser.parse_args()
     
-    # Ensure database credentials exist in environment
-    if not os.environ.get("NEXT_PUBLIC_INSFORGE_URL") or not os.environ.get("NEXT_PUBLIC_INSFORGE_ANON_KEY"):
-        # Try loading from apps/web/.env.local as a fallback
+    # Prefer server-only InsForge credentials. Local dev may still have only the
+    # public browser env file; DiscoveryStore prints the hardening warning.
+    if not os.environ.get("INSFORGE_API_BASE_URL") or not os.environ.get("INSFORGE_API_KEY"):
         local_env = Path(__file__).resolve().parents[2] / "apps" / "web" / ".env.local"
         if local_env.exists():
+            print(
+                "Warning: falling back to apps/web/.env.local. Set INSFORGE_API_BASE_URL and INSFORGE_API_KEY for server code.",
+                file=sys.stderr,
+            )
             for line in local_env.read_text(encoding="utf-8").splitlines():
                 if "=" in line and not line.strip().startswith("#"):
                     k, v = line.split("=", 1)

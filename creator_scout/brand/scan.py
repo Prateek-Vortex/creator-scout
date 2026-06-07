@@ -12,7 +12,6 @@ def main() -> None:
     load_env()
     parser = argparse.ArgumentParser(description="Scan a brand URL and generate creator discovery queries")
     parser.add_argument("brand_url")
-    parser.add_argument("--db", default="data/creator_scout.sqlite3")
     parser.add_argument("--org-id", default="system")
     parser.add_argument("--geo", default="India")
     parser.add_argument("--goal", default="ugc")
@@ -21,7 +20,7 @@ def main() -> None:
     parser.add_argument("--query-limit", type=int, default=5)
     args = parser.parse_args()
 
-    store = DiscoveryStore(args.db)
+    store = DiscoveryStore()
     try:
         result = BrandScanService(store).scan(
             args.brand_url,
@@ -39,4 +38,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

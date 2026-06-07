@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
 from creator_scout.campaign.service import CampaignService
 from creator_scout.config import load_env
@@ -13,7 +12,6 @@ def main() -> None:
     load_env()
     parser = argparse.ArgumentParser(description="Create a brand-led Creator Scout campaign.")
     parser.add_argument("brand_url")
-    parser.add_argument("--db", default=os.environ.get("CREATOR_SCOUT_DB", "data/creator_scout.sqlite3"))
     parser.add_argument("--org-id", default="system")
     parser.add_argument("--geo", default="India")
     parser.add_argument("--goal", default="ugc")
@@ -25,7 +23,7 @@ def main() -> None:
     parser.add_argument("--shortlist-limit", type=int, default=25)
     args = parser.parse_args()
 
-    store = DiscoveryStore(args.db)
+    store = DiscoveryStore()
     try:
         service = CampaignService(store)
         result = service.create_campaign(

@@ -79,7 +79,7 @@ def fake_brand_scan_service(store: DiscoveryStore) -> BrandScanService:
 class CampaignOrchestratorTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.store = DiscoveryStore(Path(self.tmp.name) / "campaign.sqlite3")
+        self.store = DiscoveryStore(Path(self.tmp.name) / "campaign-store-arg-ignored")
         ingest_records(self.store, json.loads(SEED_PATH.read_text(encoding="utf-8")))
 
     def tearDown(self) -> None:
@@ -102,6 +102,8 @@ class CampaignOrchestratorTestCase(unittest.TestCase):
         self.assertEqual(campaign["brief"]["category"], "skincare")
         self.assertEqual(len(result["discovery_job_ids"]), 2)
         self.assertEqual(len(campaign["jobs"]), 2)
+        self.assertEqual(campaign["job_summary"]["queued"], 2)
+        self.assertEqual(campaign["job_summary"]["pending"], 2)
         for job_id in result["discovery_job_ids"]:
             job = self.store.get_discovery_job(job_id)
             self.assertEqual(job["input"]["campaign_id"], campaign["id"])
@@ -130,6 +132,57 @@ class CampaignOrchestratorTestCase(unittest.TestCase):
         saved_rows = self.store.list_campaign_creators(campaign_id)
         self.assertEqual(saved_rows[0]["creator_id"], top["creator_id"])
         self.assertEqual(self.store.get_campaign(campaign_id)["status"], "shortlisted")
+        self.assertEqual(shortlist["job_summary"]["queued"], len(created["discovery_job_ids"]))
+
+    def test_campaign_creator_update_and_export_persist(self) -> None:
+        service = CampaignService(self.store, brand_scan_service=fake_brand_scan_service(self.store))
+        created = service.create_campaign(
+            "https://glow.example",
+            org_id="org_campaign",
+            geo="India",
+            goal="ugc",
+            provider="youtube",
+            query_limit=2,
+        )
+        campaign_id = created["campaign"]["id"]
+        shortlist = service.build_shortlist(campaign_id, org_id="org_campaign", limit=5)
+        creator_id = shortlist["shortlist"][0]["creator_id"]
+
+        updated = service.update_campaign_creator(
+            campaign_id,
+            creator_id,
+            org_id="org_campaign",
+            status="contacted",
+            recommended_pitch="Updated pitch",
+            notes="Private note",
+        )
+
+        self.assertEqual(updated["status"], "contacted")
+        self.assertEqual(updated["recommended_pitch"], "Updated pitch")
+        self.assertEqual(updated["notes"], "Private note")
+        persisted = self.store.get_campaign_creator(campaign_id, creator_id)
+        self.assertEqual(persisted["status"], "contacted")
+        self.assertEqual(persisted["notes"], "Private note")
+
+        original_upload = self.store.upload_storage_object
+        self.store.upload_storage_object = lambda **kwargs: {
+            "key": kwargs["key"],
+            "url": f"https://exports.example/{kwargs['key']}",
+        }
+        try:
+            export = service.export_shortlist(campaign_id, org_id="org_campaign")
+        finally:
+            self.store.upload_storage_object = original_upload
+
+        self.assertEqual(export["campaign_id"], campaign_id)
+        self.assertEqual(export["row_count"], len(shortlist["shortlist"]))
+        self.assertTrue(export["storage_key"].endswith(".csv"))
+        rows = self.store._request(
+            "GET",
+            f"/api/database/records/campaign_exports?campaign_id=eq.{campaign_id}",
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["storage_key"], export["storage_key"])
 
     def test_campaign_api_charges_and_returns_shortlist(self) -> None:
         _, api_key = provision_api_key(
@@ -167,6 +220,7 @@ class CampaignOrchestratorTestCase(unittest.TestCase):
             service_module.CampaignService = original
 
         self.assertEqual(len(created["data"]["discovery_job_ids"]), 2)
+        self.assertEqual(created["data"]["campaign"]["job_summary"]["queued"], 2)
         self.assertEqual(shortlist["data"]["shortlist"][0]["creator"]["display_name"], "Aditi Skin Notes")
         self.assertEqual(self.store.current_credit_usage("org_campaign_api"), 4.0)
 
