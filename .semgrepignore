@@ -1,0 +1,13 @@
+# Node modules
+node_modules/
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Python cache
+__pycache__/
+.pytest_cache/
+.ruff_cache/

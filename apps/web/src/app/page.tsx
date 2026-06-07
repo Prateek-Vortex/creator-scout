@@ -1,0 +1,1370 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { motion, useScroll, useTransform, useSpring, AnimatePresence } from "framer-motion";
+import { api } from "@/lib/api";
+import type { Campaign, CampaignCreator } from "@/lib/api";
+import { getInsForgeClient, hasInsForgeConfig } from "@/lib/insforge";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const PLATFORM_OPTIONS = ["youtube", "instagram", "tiktok"];
+const GOAL_OPTIONS = ["ugc", "seeding", "reviews", "affiliate", "awareness"];
+const CRM_COLUMNS = [
+  { id: "shortlisted",     label: "Shortlisted",      color: "text-[#7a7a7a]" },
+  { id: "contacted",       label: "Contacted",        color: "text-ink" },
+  { id: "replied",         label: "Replied",          color: "text-accent-teal" },
+  { id: "negotiating",     label: "Negotiating",      color: "text-ink" },
+  { id: "accepted",        label: "Accepted",         color: "text-success" },
+  { id: "content_pending", label: "Content Pending",  color: "text-warning" },
+  { id: "live",            label: "Live",             color: "text-success" },
+  { id: "done",            label: "Done",             color: "text-[#7a7a7a]" },
+];
+
+const AVATAR_COLORS = [
+  "bg-[#fde8e4] text-[#c4402d] border-[#f5c4ba]",
+  "bg-[#e0f5f3] text-[#1e7a72] border-[#b5e5e0]",
+  "bg-[#ece4fb] text-[#6b4ec0] border-[#cebdf5]",
+  "bg-[#fdf0db] text-[#b07920] border-[#f0d9a6]",
+];
+
+const STICKER_ROTATIONS = [-2, 1.5, -1, 2.5, -1.5, 2, -0.5, 1];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+type ApiHealth = "checking" | "online" | "offline";
+type ActiveTab = "brief" | "strategy" | "shortlist" | "outreach" | "crm" | "export";
+
+// ─── Tiny SVG Icon Kit ────────────────────────────────────────────────────────
+const Icon = {
+  brief: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+    </svg>
+  ),
+  strategy: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+    </svg>
+  ),
+  shortlist: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+    </svg>
+  ),
+  outreach: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+    </svg>
+  ),
+  crm: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 8.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
+    </svg>
+  ),
+  export: () => (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+    </svg>
+  ),
+  check: () => (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+    </svg>
+  ),
+  copy: () => (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+    </svg>
+  ),
+  external: () => (
+    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+    </svg>
+  ),
+  chevronDown: () => (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+    </svg>
+  ),
+  sparkle: () => (
+    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" />
+    </svg>
+  ),
+};
+
+// ─── Small helper components ───────────────────────────────────────────────────
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid gap-2 text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">
+      {label}
+      {children}
+    </label>
+  );
+}
+
+function PlatformPill({ platform }: { platform: string }) {
+  const badgeMap: Record<string, string> = {
+    youtube:   "badge-coral",
+    instagram: "badge-lavender",
+    tiktok:    "badge-teal",
+  };
+  const cls = badgeMap[platform.toLowerCase()] ?? "badge-amber";
+  return (
+    <span className={`badge-sticker ${cls} text-[9px]`}>
+      {platform}
+    </span>
+  );
+}
+
+function MetricCard({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className={`rounded-xl border p-5 ${accent ? "border-accent/20 bg-accent/5" : "border-[#e8e4df] bg-white"}`}>
+      <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">{label}</p>
+      <p className={`mt-2 text-base font-medium truncate ${accent ? "text-accent" : "text-ink"}`}>{value || "—"}</p>
+    </div>
+  );
+}
+
+function ChipList({ label, values, variant = "default" }: { label: string; values: string[]; variant?: "success" | "danger" | "default" }) {
+  if (!values.length) return null;
+  const chipCls = variant === "success" ? "border-success/20 bg-success/5 text-success"
+    : variant === "danger" ? "border-danger/20 bg-danger/5 text-danger"
+    : "border-[#e8e4df] bg-[#f8f6f2] text-[#5a5a5a]";
+  return (
+    <div className="rounded-xl border border-[#e8e4df] bg-white p-5">
+      <p className="mb-3.5 text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">{label}</p>
+      <div className="flex flex-wrap gap-2">
+        {values.map((v) => (
+          <span className={`rounded-md border px-3 py-1.5 text-[11px] font-medium ${chipCls}`} key={v}>{v}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md" | "lg" }) {
+  const initials = name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase() || name.slice(0, 2).toUpperCase();
+  const colorCls = AVATAR_COLORS[name.length % AVATAR_COLORS.length];
+  const sizeClass = size === "sm" ? "w-8 h-8 text-[10px]" : size === "lg" ? "w-14 h-14 text-sm" : "w-10 h-10 text-xs";
+  return (
+    <div className={`${sizeClass} rounded-full ${colorCls} border flex items-center justify-center font-semibold shrink-0`}>
+      {initials}
+    </div>
+  );
+}
+
+// ─── Navbar ───────────────────────────────────────────────────────────────────
+function Navbar({
+  onGetStarted,
+  user,
+  onSignOut,
+}: {
+  onGetStarted: () => void;
+  user: any;
+  onSignOut: () => void;
+}) {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const handler = () => setScrolled(window.scrollY > 20);
+    window.addEventListener("scroll", handler);
+    return () => window.removeEventListener("scroll", handler);
+  }, []);
+
+  return (
+    <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled ? "bg-[#faf9f6]/90 backdrop-blur-md border-b border-[#e8e4df] shadow-sm" : "bg-transparent border-b border-transparent"}`}>
+      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        {/* Logo */}
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-lg bg-[#1a1a1a] flex items-center justify-center text-[#faf9f6] font-bold text-[10px] shadow-sm">
+            CS
+          </div>
+          <span className="text-sm font-semibold text-ink tracking-tight">Creator Scout</span>
+        </div>
+
+        {/* Nav links */}
+        <div className="hidden md:flex items-center gap-1">
+          {["Features", "Pricing", "Docs", "Blog"].map((item) => (
+            <button key={item} className="px-3.5 py-2 rounded-md text-xs font-medium text-[#7a7a7a] hover:text-ink hover:bg-[#f3f0eb] transition-all cursor-pointer">
+              {item}
+            </button>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-4">
+          {user ? (
+            <>
+              <span className="text-xs text-[#7a7a7a]">
+                Hi, <span className="font-semibold text-ink">{user.profile?.name || user.email}</span>
+              </span>
+              <button
+                onClick={onSignOut}
+                className="px-3 py-1.5 rounded-lg border border-[#e8e4df] text-xs font-semibold text-ink bg-white hover:bg-[#f3f0eb] transition cursor-pointer"
+              >
+                Log out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link href="/sign-in" className="px-4 py-2 rounded-md text-xs font-medium text-[#7a7a7a] hover:text-ink transition-colors">
+                Log in
+              </Link>
+              <button
+                onClick={onGetStarted}
+                className="glow-btn px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer"
+              >
+                Start free
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+// ─── Landing Page ─────────────────────────────────────────────────────────────
+function LandingPage({
+  onLaunch,
+  apiHealth,
+}: {
+  onLaunch: (params: { brand_url: string; goal: string; geo: string; platforms: string[] }) => void;
+  apiHealth: ApiHealth;
+}) {
+  const [brandUrl, setBrandUrl] = useState("");
+  const formRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+
+  // Scroll-linked hero effect
+  const { scrollYProgress } = useScroll({
+    target: heroRef,
+    offset: ["start start", "end start"],
+  });
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
+  const heroScale = useTransform(scrollYProgress, [0, 0.8], [1, 0.95]);
+  const heroY = useTransform(scrollYProgress, [0, 1], [0, -60]);
+  const smoothOpacity = useSpring(heroOpacity, { stiffness: 80, damping: 20 });
+  const smoothScale = useSpring(heroScale, { stiffness: 80, damping: 20 });
+
+  function scrollToForm() {
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    onLaunch({ brand_url: brandUrl, goal: "ugc", geo: "India", platforms: PLATFORM_OPTIONS });
+  }
+
+  function fillDemo() {
+    setBrandUrl("https://glowlabskincare.com");
+  }
+
+  const STATS = [
+    { value: "12,400+", label: "Creators indexed", badge: "badge-coral" },
+    { value: "500+",    label: "Campaigns launched", badge: "badge-teal" },
+    { value: "3.2×",   label: "Avg. ROI uplift", badge: "badge-lavender" },
+    { value: "98%",    label: "Deliverability", badge: "badge-amber" },
+  ];
+
+  const FEATURES = [
+    {
+      icon: "◇",
+      title: "Brand Intelligence",
+      desc: "Crawls your website and extracts positioning, tone, audience, and ideal creator profile automatically.",
+      tags: ["Claude 4.5", "Extraction"],
+      badge: "badge-coral",
+    },
+    {
+      icon: "◒",
+      title: "Semantic Matching",
+      desc: "Vector embeddings rank creators by genuine audience overlap — not just keyword similarity.",
+      tags: ["pgvector", "PostgreSQL"],
+      badge: "badge-teal",
+    },
+    {
+      icon: "✉",
+      title: "Compliant Outreach",
+      desc: "Generates personalized pitches grounded in each creator's actual content and public contacts.",
+      tags: ["GDPR", "Auto-draft"],
+      badge: "badge-lavender",
+    },
+    {
+      icon: "≡",
+      title: "Full Campaign CRM",
+      desc: "Track every negotiation from shortlist to live content and export your pipeline as CSV.",
+      tags: ["Kanban", "CSV"],
+      badge: "badge-amber",
+    },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#faf9f6] text-ink">
+      {/* ── Hero ── */}
+      <section ref={heroRef} className="relative pt-28 pb-20 px-6 grid-overlay overflow-hidden" style={{ minHeight: "90vh" }}>
+        <motion.div
+          className="relative z-10 max-w-4xl mx-auto text-center"
+          style={{ opacity: smoothOpacity, scale: smoothScale, y: heroY }}
+        >
+          {/* Floating accent stickers */}
+          <motion.div
+            className="absolute -top-4 -left-8 md:left-12 badge-sticker badge-coral text-[10px] select-none pointer-events-none"
+            animate={{ y: [0, -8, 0], rotate: [-3, -1, -3] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+          >
+            ✦ AI-Powered
+          </motion.div>
+          <motion.div
+            className="absolute top-8 -right-4 md:right-8 badge-sticker badge-teal text-[10px] select-none pointer-events-none"
+            animate={{ y: [0, -6, 0], rotate: [2, 4, 2] }}
+            transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+          >
+            GDPR Compliant
+          </motion.div>
+          <motion.div
+            className="absolute bottom-16 -left-4 md:left-4 badge-sticker badge-lavender text-[10px] select-none pointer-events-none hidden md:inline-flex"
+            animate={{ y: [0, -10, 0], rotate: [-2, 1, -2] }}
+            transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+          >
+            Vector Search
+          </motion.div>
+
+          <motion.div
+            className="inline-flex items-center gap-2 rounded-full border border-[#e8e4df] bg-white px-4 py-1.5 text-[10px] font-semibold text-[#7a7a7a] mb-8 shadow-sm"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1, duration: 0.5 }}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+            SOC 2 Type II in Progress
+          </motion.div>
+
+          <motion.h1
+            className="text-4xl sm:text-6xl font-semibold tracking-tight text-ink leading-tight mb-6"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2, duration: 0.6 }}
+          >
+            Find creators that
+            <br />
+            <span className="handwriting text-5xl sm:text-7xl text-accent" style={{ fontFamily: "var(--font-caveat)" }}>
+              actually fit
+            </span>
+            {" "}your brand
+          </motion.h1>
+
+          <motion.p
+            className="text-sm sm:text-base text-[#7a7a7a] font-normal leading-relaxed max-w-2xl mx-auto mb-10"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35, duration: 0.6 }}
+          >
+            Paste your website URL. Creator Scout crawls it, extracts your brand DNA,
+            semantically matches compliant creators, and drafts personalized pitches — all inside one workspace.
+          </motion.p>
+
+          {/* ── Inline URL form ── */}
+          <motion.form
+            className="max-w-xl mx-auto"
+            onSubmit={handleSubmit}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5, duration: 0.6 }}
+          >
+            <div className="notebook-page p-2 flex items-center gap-2">
+              <input
+                id="hero-url-input"
+                className="flex-1 px-4 py-3.5 text-sm font-mono bg-transparent border-none outline-none text-ink placeholder:text-[#c4bfb7]"
+                onChange={(e) => setBrandUrl(e.target.value)}
+                placeholder="https://yourbrand.com"
+                required
+                type="url"
+                value={brandUrl}
+              />
+              <button
+                className="glow-btn-accent px-6 py-3.5 text-sm font-semibold cursor-pointer shrink-0 rounded-xl"
+                type="submit"
+              >
+                Analyze →
+              </button>
+            </div>
+          </motion.form>
+
+          <motion.div
+            className="mt-4 flex items-center justify-center gap-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.7, duration: 0.5 }}
+          >
+            <button
+              onClick={() => { fillDemo(); scrollToForm(); }}
+              className="text-xs font-medium text-[#7a7a7a] hover:text-ink transition-colors cursor-pointer underline decoration-dotted underline-offset-4"
+            >
+              Try with demo brand
+            </button>
+            <span className="text-[#d4cfc8]">·</span>
+            <span className="text-[10px] text-[#b5afa6]">No credit card required</span>
+          </motion.div>
+        </motion.div>
+      </section>
+
+      {/* ── Stats bar (floating sticker badges) ── */}
+      <section className="relative -mt-12 mb-8 px-6 z-20">
+        <div className="max-w-4xl mx-auto flex flex-wrap justify-center gap-6">
+          {STATS.map((s, i) => (
+            <motion.div
+              key={s.label}
+              className="sticker-card px-6 py-4 text-center"
+              style={{ rotate: STICKER_ROTATIONS[i] }}
+              initial={{ opacity: 0, y: 30, rotate: 0 }}
+              whileInView={{ opacity: 1, y: 0, rotate: STICKER_ROTATIONS[i] }}
+              viewport={{ once: true, amount: 0.5 }}
+              transition={{ delay: i * 0.1, duration: 0.5 }}
+              whileHover={{ rotate: 0, scale: 1.05 }}
+            >
+              <p className="text-2xl font-semibold text-ink">{s.value}</p>
+              <p className="text-[10px] text-[#7a7a7a] font-semibold mt-1 uppercase tracking-wider">{s.label}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Features (Polaroid sticker cards) ── */}
+      <section className="py-20 px-6 bg-[#faf9f6]">
+        <div className="max-w-6xl mx-auto">
+          <motion.div
+            className="mb-14 text-center"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+          >
+            <h2 className="text-2xl sm:text-3xl font-semibold text-ink tracking-tight">
+              Everything you need,{" "}
+              <span style={{ fontFamily: "var(--font-caveat)" }} className="text-accent-teal text-3xl sm:text-4xl">
+                nothing you don&apos;t
+              </span>
+            </h2>
+            <p className="text-sm text-[#7a7a7a] mt-3 max-w-lg mx-auto">
+              Built for precision, scale, and compliance from day one.
+            </p>
+          </motion.div>
+
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {FEATURES.map((f, i) => (
+              <motion.div
+                key={f.title}
+                className="sticker-card p-6 flex flex-col group"
+                style={{ rotate: STICKER_ROTATIONS[i] }}
+                initial={{ opacity: 0, y: 40, rotate: 0 }}
+                whileInView={{ opacity: 1, y: 0, rotate: STICKER_ROTATIONS[i] }}
+                viewport={{ once: true, amount: 0.3 }}
+                transition={{ delay: i * 0.12, duration: 0.5 }}
+                whileHover={{ rotate: 0, y: -6, scale: 1.02 }}
+              >
+                <div className="text-2xl mb-4">{f.icon}</div>
+                <h3 className="text-sm font-semibold text-ink mb-2">{f.title}</h3>
+                <p className="text-xs text-[#7a7a7a] leading-relaxed mb-4 flex-1">{f.desc}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {f.tags.map((t) => (
+                    <span key={t} className={`badge-sticker ${f.badge} text-[9px]`}>
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Demo Form (simplified URL-only) ── */}
+      <section className="py-20 px-6 bg-[#f5f2ed]" ref={formRef} id="try-form">
+        <div className="max-w-2xl mx-auto">
+          <motion.div
+            className="mb-10 text-center"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <h2 className="text-2xl font-semibold text-ink tracking-tight">
+              Ready to{" "}
+              <span style={{ fontFamily: "var(--font-caveat)" }} className="text-accent text-3xl">scout?</span>
+            </h2>
+            <p className="text-sm text-[#7a7a7a] mt-2">
+              Paste a URL. We handle the rest.
+            </p>
+          </motion.div>
+
+          <motion.div
+            className="notebook-page p-8"
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+          >
+            <form className="grid gap-5" onSubmit={handleSubmit}>
+              <Field label="Your brand website">
+                <input
+                  id="form-url-input"
+                  className="glass-input focus-ring w-full px-4 py-3.5 text-sm font-mono"
+                  onChange={(e) => setBrandUrl(e.target.value)}
+                  placeholder="https://example.com"
+                  required
+                  type="url"
+                  value={brandUrl}
+                />
+              </Field>
+
+              <button
+                id="analyze-btn"
+                className="glow-btn-accent focus-ring w-full rounded-xl py-3.5 text-sm font-semibold cursor-pointer mt-1"
+                type="submit"
+              >
+                Analyze &amp; Generate Campaign
+              </button>
+            </form>
+
+            {/* Trust strip */}
+            <div className="mt-6 pt-5 border-t border-[#e8e4df] flex flex-wrap items-center justify-center gap-5 text-[10px] text-[#b5afa6] font-semibold">
+              {["SOC 2", "GDPR", "No Scraping", "Encrypted"].map((t) => (
+                <span key={t} className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#d4cfc8]" />
+                  {t}
+                </span>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* API Health indicator */}
+          <div className="mt-6 flex justify-center">
+            <div className="flex items-center gap-2 text-xs font-medium">
+              <span className="text-[#b5afa6]">API</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${apiHealth === "online" ? "bg-success" : apiHealth === "offline" ? "bg-danger" : "bg-warning animate-pulse"}`} />
+              <span className="text-[#7a7a7a] capitalize font-mono text-[10px]">{apiHealth}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Footer ── */}
+      <footer className="border-t border-[#e8e4df] py-8 px-6 bg-white">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#7a7a7a]">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-ink">Creator Scout</span>
+            <span>© 2026</span>
+          </div>
+          <div className="flex gap-5">
+            {["Privacy", "Terms", "Security", "Status"].map((l) => (
+              <button key={l} className="hover:text-ink transition-colors cursor-pointer">{l}</button>
+            ))}
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// ─── Workspace ────────────────────────────────────────────────────────────────
+function Workspace({
+  campaign,
+  creators,
+  onReset,
+  onFindCreators,
+  onStatusChange,
+  onPitchChange,
+  onExport,
+  isFindingCreators,
+  message,
+  onDismissMessage,
+}: {
+  campaign: Campaign;
+  creators: CampaignCreator[];
+  onReset: () => void;
+  onFindCreators: () => void;
+  onStatusChange: (id: string, status: string) => void;
+  onPitchChange: (id: string, pitch: string) => void;
+  onExport: () => void;
+  isFindingCreators: boolean;
+  message: string;
+  onDismissMessage: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<ActiveTab>("brief");
+  const [selectedId, setSelectedId] = useState<string | null>(creators[0]?.creator_id ?? null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const activeCreator = useMemo(
+    () => creators.find((c) => c.creator_id === selectedId) ?? creators[0] ?? null,
+    [creators, selectedId]
+  );
+
+  const TABS = [
+    { id: "brief",     label: "Brand Brief",      icon: <Icon.brief /> },
+    { id: "strategy",  label: "Discovery",        icon: <Icon.strategy /> },
+    { id: "shortlist", label: "Shortlist",         icon: <Icon.shortlist />, badge: creators.length || undefined },
+    { id: "outreach",  label: "Outreach",          icon: <Icon.outreach /> },
+    { id: "crm",       label: "Pipeline",          icon: <Icon.crm /> },
+    { id: "export",    label: "Export",            icon: <Icon.export /> },
+  ] as const;
+
+  const FINDER_LOGS = [
+    "Initializing discovery workers...",
+    "Querying vector database...",
+    "Computing alignment scores...",
+    "Drafting templates...",
+    "Complete",
+  ];
+  const [finderLogIdx, setFinderLogIdx] = useState(0);
+  useEffect(() => {
+    if (!isFindingCreators) return;
+    const t = setInterval(() => setFinderLogIdx((p) => (p + 1) % FINDER_LOGS.length), 1500);
+    return () => clearInterval(t);
+  }, [isFindingCreators]);
+
+  function copyText(text: string, id: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 1800);
+  }
+
+  return (
+    <div className="flex h-screen bg-[#faf9f6] text-ink overflow-hidden">
+      {/* ── Sidebar ── */}
+      <aside className="w-60 shrink-0 flex flex-col border-r border-[#e8e4df] bg-white">
+        {/* Top */}
+        <div className="px-5 py-5 border-b border-[#e8e4df]">
+          <div className="flex items-center gap-2.5 mb-5">
+            <div className="w-6 h-6 rounded-md bg-[#1a1a1a] flex items-center justify-center text-[#faf9f6] font-bold text-[9px] shrink-0">CS</div>
+            <div>
+              <p className="text-xs font-semibold text-ink leading-none">Creator Scout</p>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3 relative overflow-hidden">
+            <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-1">Project</p>
+            <p className="text-xs font-semibold text-ink truncate">{campaign.brief.brand_name || "Campaign"}</p>
+            <a
+              href={campaign.brand_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-[#7a7a7a] hover:text-ink transition-colors truncate flex items-center gap-1 mt-1 font-mono"
+            >
+              {campaign.brand_url.replace(/^https?:\/\//, "")}
+            </a>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 px-3 py-4 grid gap-1">
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-xs font-medium transition-all cursor-pointer text-left group ${
+                  active
+                    ? "bg-[#f3f0eb] text-ink shadow-sm"
+                    : "text-[#7a7a7a] hover:text-ink hover:bg-[#f8f6f2]"
+                }`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className={active ? "text-accent" : "text-[#b5afa6]"}>{tab.icon}</span>
+                  {tab.label}
+                </span>
+                {"badge" in tab && tab.badge ? (
+                  <span className="text-[10px] badge-sticker badge-coral py-0 px-1.5">{tab.badge}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Bottom */}
+        <div className="px-3 py-4 border-t border-[#e8e4df] grid gap-2">
+          <button
+            onClick={onReset}
+            className="w-full text-xs font-medium text-[#7a7a7a] hover:text-ink hover:bg-[#f3f0eb] rounded-lg py-2 transition-all cursor-pointer text-left px-3"
+          >
+            ← New Campaign
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main pane ── */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-[#faf9f6]">
+        {/* Top bar */}
+        <header className="shrink-0 h-12 border-b border-[#e8e4df] bg-white flex items-center px-6 gap-4">
+          <div className="flex-1 flex items-center gap-2 text-xs font-mono">
+            <span className="text-[#7a7a7a]">{campaign.brief.brand_name || campaign.brand_url}</span>
+            <span className="text-[#d4cfc8]">/</span>
+            <span className="text-ink capitalize font-semibold">{activeTab}</span>
+          </div>
+          {message && (
+            <div className="flex items-center gap-2 bg-[#f8f6f2] border border-[#e8e4df] rounded-lg px-3 py-1 text-[10px] font-mono text-ink max-w-md truncate">
+              <span>{message}</span>
+              <button onClick={onDismissMessage} className="ml-1 text-[#7a7a7a] hover:text-ink cursor-pointer shrink-0">✕</button>
+            </div>
+          )}
+        </header>
+
+        {/* Scrollable content */}
+        <main className="flex-1 overflow-y-auto scrollbar-thin px-8 py-8">
+          <div className="max-w-5xl mx-auto">
+
+            {/* ── Tab: Brief ── */}
+            {activeTab === "brief" && (
+              <motion.div className="grid gap-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                <div>
+                  <h2 className="text-xl font-semibold text-ink tracking-tight">Brand Intelligence</h2>
+                  <p className="text-xs text-[#7a7a7a] mt-1 font-mono">Extracted positioning and audience profile.</p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <MetricCard label="Brand" value={campaign.brief.brand_name} accent />
+                  <MetricCard label="Category" value={campaign.brief.category} />
+                  <MetricCard label="Positioning" value={campaign.brief.price_positioning} />
+                  <div className="rounded-xl border border-[#e8e4df] bg-white p-5 flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Confidence</p>
+                      <p className="text-xl font-semibold text-ink mt-1">{Math.round(campaign.brief.confidence * 100)}%</p>
+                    </div>
+                    <div className="w-12 h-12 rounded-full border-4 border-success/30 flex items-center justify-center">
+                      <Icon.check />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[#e8e4df] bg-white p-6">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-3">Target Customer</p>
+                  <p className="text-ink text-sm leading-relaxed">{campaign.brief.target_audience}</p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <ChipList label="Target Niches" values={campaign.brief.best_creator_niches} />
+                  <ChipList label="Avoid Niches" values={campaign.brief.avoid_creator_types} />
+                  <ChipList label="Tone" values={campaign.brief.tone} />
+                  <ChipList label="Angles" values={campaign.brief.campaign_angles} />
+                </div>
+
+                {campaign.brief.evidence.length > 0 && (
+                  <div className="rounded-xl border border-[#e8e4df] bg-white p-6">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-4">Evidence Sources</p>
+                    <div className="grid gap-2">
+                      {campaign.brief.evidence.map((ev, i) => (
+                        <a key={i} href={ev.source_url} target="_blank" rel="noreferrer"
+                          className="flex items-center justify-between rounded-lg bg-[#f8f6f2] border border-[#e8e4df] hover:border-[#d4cfc8] px-4 py-3 transition-all group"
+                        >
+                          <div className="truncate mr-3">
+                            <span className="text-xs font-medium text-ink">{ev.title || ev.page_type}</span>
+                            <span className="text-[10px] text-[#7a7a7a] ml-2 font-mono">{ev.source_url.replace(/^https?:\/\//, "").slice(0, 40)}</span>
+                          </div>
+                          <span className="badge-sticker badge-amber text-[9px] py-0">{ev.field}</span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── Tab: Strategy ── */}
+            {activeTab === "strategy" && (
+              <motion.div className="grid gap-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                <div>
+                  <h2 className="text-xl font-semibold text-ink tracking-tight">Discovery Pipeline</h2>
+                  <p className="text-xs text-[#7a7a7a] mt-1 font-mono">Search vector database for matching creators.</p>
+                </div>
+
+                <div className="notebook-page p-6">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5">
+                    <div>
+                      <h3 className="text-sm font-semibold text-ink">Execute Search</h3>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {[`goal:${campaign.goal}`, `geo:${campaign.geo}`, `platforms:${campaign.platforms.join(",")}`].map((t) => (
+                          <span key={t} className="badge-sticker badge-teal text-[10px]">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <button
+                      id="run-discovery-btn"
+                      onClick={onFindCreators}
+                      disabled={isFindingCreators}
+                      className="glow-btn-accent px-6 py-2.5 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      {isFindingCreators ? "Running..." : "Run Discovery"}
+                    </button>
+                  </div>
+
+                  {isFindingCreators && (
+                    <div className="mt-6 rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-4 font-mono text-[10px]">
+                      {FINDER_LOGS.map((log, i) => {
+                        const done = i < finderLogIdx;
+                        const active = i === finderLogIdx;
+                        return (
+                          <div key={i} className={`flex items-center gap-2 py-1 ${done ? "text-[#b5afa6]" : active ? "text-ink" : "text-[#d4cfc8]"}`}>
+                            <span>{done ? "✓" : active ? "▸" : "○"}</span>
+                            <span>{log}</span>
+                            {active && <span className="w-1.5 h-3 bg-accent inline-block animate-pulse rounded-sm" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {campaign.search_queries.length > 0 && (
+                  <ChipList label="Queries" values={campaign.search_queries} />
+                )}
+              </motion.div>
+            )}
+
+            {/* ── Tab: Shortlist ── */}
+            {activeTab === "shortlist" && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-xl font-semibold text-ink tracking-tight">Shortlist</h2>
+                  </div>
+                  {creators.length > 0 && (
+                    <button onClick={() => setActiveTab("crm")} className="text-xs font-semibold text-ink border border-[#e8e4df] bg-white hover:bg-[#f3f0eb] px-4 py-2 rounded-lg transition cursor-pointer shadow-sm">
+                      Pipeline →
+                    </button>
+                  )}
+                </div>
+
+                {creators.length === 0 ? (
+                  <div className="notebook-page p-16 text-center">
+                    <p className="text-ink font-semibold text-sm">Empty shortlist</p>
+                    <p className="text-[#7a7a7a] text-xs mt-1 mb-4 font-mono">Execute discovery to populate.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 xl:grid-cols-[1fr_340px]">
+                    {/* List */}
+                    <div className="grid gap-2 max-h-[calc(100vh-220px)] overflow-y-auto scrollbar-thin pr-1">
+                      {creators.map((item) => {
+                        const name = item.creator?.display_name || item.creator_id;
+                        const selected = selectedId === item.creator_id;
+                        const score = item.fit_score;
+
+                        return (
+                          <motion.div
+                            key={item.id}
+                            onClick={() => setSelectedId(item.creator_id)}
+                            className={`flex items-center gap-4 p-3 rounded-xl border cursor-pointer transition-all ${
+                              selected
+                                ? "border-accent/30 bg-accent/5 shadow-sm"
+                                : "border-[#e8e4df] bg-white hover:border-[#d4cfc8] hover:shadow-sm"
+                            }`}
+                            whileHover={{ x: 2 }}
+                          >
+                            <Avatar name={name} size="sm" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-ink truncate">{name}</span>
+                                <PlatformPill platform={item.creator?.accounts[0]?.platform || "unknown"} />
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 text-[10px] text-[#7a7a7a] font-mono flex-wrap">
+                                <span>{item.creator?.primary_niche || "—"}</span>
+                                <span className="text-[#d4cfc8]">/</span>
+                                <span className={item.risks.length ? "text-danger" : "text-success"}>
+                                  {item.risks.length ? item.risks[0] : "Clean"}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0 pr-2">
+                              <span className="text-[10px] font-mono text-[#b5afa6] block leading-none mb-1">Score</span>
+                              <span className="text-sm font-semibold text-ink leading-none">{score}</span>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Detail panel */}
+                    <div className="notebook-page p-5 h-fit sticky top-0 max-h-[calc(100vh-140px)] overflow-y-auto scrollbar-thin">
+                      {!activeCreator?.creator ? (
+                        <div className="py-8 text-center text-xs text-[#7a7a7a] font-mono">
+                          Select a record.
+                        </div>
+                      ) : (
+                        <div className="grid gap-5">
+                          {/* Header / Avatar */}
+                          <div className="flex items-start gap-3">
+                            <Avatar name={activeCreator.creator.display_name} size="md" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-ink">{activeCreator.creator.display_name}</p>
+                              <p className="text-[10px] text-[#7a7a7a] font-mono mt-0.5">{activeCreator.creator.primary_niche}</p>
+                              <div className="mt-2">
+                                <PlatformPill platform={activeCreator.creator.accounts[0]?.platform || "unknown"} />
+                              </div>
+                            </div>
+                          </div>
+
+                          <p className="text-xs text-[#7a7a7a] leading-relaxed">{activeCreator.creator.summary}</p>
+
+                          {/* Compliance Status */}
+                          <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-1.5">Compliance Status</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              <span className={`badge-sticker ${
+                                activeCreator.creator.contacts[0]?.permission_basis?.toLowerCase() === "opt-in" || activeCreator.creator.contacts[0]?.permission_basis?.toLowerCase() === "public"
+                                  ? "badge-teal"
+                                  : "badge-amber"
+                              } text-[9px] py-0.5`}>
+                                ✓ {activeCreator.creator.contacts[0]?.permission_basis || "Public Data"}
+                              </span>
+                              {activeCreator.risks && activeCreator.risks.length > 0 ? (
+                                <span className="badge-sticker badge-coral text-[9px] py-0.5">
+                                  ⚠ Risk: {activeCreator.risks[0]}
+                                </span>
+                              ) : (
+                                <span className="badge-sticker badge-teal text-[9px] py-0.5">
+                                  ✓ Low Risk
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Evidence Grid / Match Reasons */}
+                          <div className="rounded-lg border border-[#e8e4df] bg-white p-3">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-1.5">Match Alignment ({activeCreator.fit_score}%)</p>
+                            {activeCreator.evidence?.[0]?.match_reasons && activeCreator.evidence[0].match_reasons.length > 0 ? (
+                              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                {activeCreator.evidence[0].match_reasons.map((reason, idx) => (
+                                  <span key={idx} className="badge-sticker badge-lavender text-[9px] py-0.5">
+                                    ✦ {reason}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-[#7a7a7a] italic mt-1 font-mono">Matched on niche interests.</p>
+                            )}
+                          </div>
+
+                          {/* Pitch Composition Box */}
+                          <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-2">Personalized Pitch</p>
+                            <textarea
+                              className="w-full h-28 rounded-lg border border-[#e8e4df] bg-white p-2.5 font-mono text-[10px] leading-relaxed text-ink resize-none focus:outline-none focus:border-[#c4bfb7] focus:shadow-sm transition-all"
+                              value={activeCreator.recommended_pitch}
+                              onChange={(e) => onPitchChange(activeCreator.creator_id, e.target.value)}
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                type="button"
+                                onClick={() => copyText(activeCreator.recommended_pitch, 'drawer-pitch')}
+                                className="flex-1 py-1.5 rounded-lg border border-[#e8e4df] text-[10px] font-semibold text-ink bg-white hover:bg-[#f3f0eb] transition cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                {copiedId === 'drawer-pitch' ? (
+                                  <span className="text-[9px] text-success font-mono">Copied!</span>
+                                ) : (
+                                  <>
+                                    <Icon.copy />
+                                    <span>Copy Pitch</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Contact Details */}
+                          {activeCreator.creator.contacts.length > 0 && (
+                            <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-2">Contact Details</p>
+                              {activeCreator.creator.contacts.map((c, i) => (
+                                <div key={i} className="flex items-center justify-between py-1.5 border-b border-[#e8e4df] last:border-0">
+                                  <div>
+                                    <p className="text-[10px] text-ink font-mono">{c.value}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => copyText(c.value, `${activeCreator.creator_id}-${i}`)}
+                                    className="text-[#7a7a7a] hover:text-ink transition cursor-pointer px-2"
+                                  >
+                                    {copiedId === `${activeCreator.creator_id}-${i}` ? (
+                                      <span className="text-[9px] text-success font-mono">Copied</span>
+                                    ) : <Icon.copy />}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="grid gap-1.5">
+                            {activeCreator.creator.accounts.map((acc, i) => (
+                              <a key={i} href={acc.profile_url} target="_blank" rel="noreferrer"
+                                className="flex items-center justify-between rounded-lg border border-[#e8e4df] bg-white hover:bg-[#f8f6f2] px-3 py-2 transition-all text-[11px]"
+                              >
+                                <span className="font-semibold text-ink capitalize">{acc.platform}</span>
+                                <span className="text-[#7a7a7a] font-mono">@{acc.handle}</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── Tab: Outreach ── */}
+            {activeTab === "outreach" && (
+              <motion.div className="grid gap-6 lg:grid-cols-[240px_1fr]" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                {/* Sidebar */}
+                <div className="notebook-page p-5 h-fit">
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-4">Meta</p>
+                  {!activeCreator ? (
+                    <p className="text-xs text-[#7a7a7a] font-mono">No selection.</p>
+                  ) : (
+                    <div className="grid gap-4">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={activeCreator.creator?.display_name || "?"} size="sm" />
+                        <p className="text-sm font-semibold text-ink truncate">{activeCreator.creator?.display_name}</p>
+                      </div>
+                      <div className="border-t border-[#e8e4df] pt-4 grid gap-3 text-xs">
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-[#7a7a7a] mb-1">Score</p>
+                          <p className="text-ink font-mono font-semibold">{activeCreator.fit_score}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-[#7a7a7a] mb-1">Compliance</p>
+                          <p className="text-ink font-mono text-[10px]">{activeCreator.creator?.contacts[0]?.permission_basis || "Public"}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Composer */}
+                <div className="notebook-page p-6">
+                  <div className="flex items-center justify-between mb-5">
+                    <h2 className="text-lg font-semibold text-ink">Composer</h2>
+                  </div>
+
+                  {!activeCreator ? (
+                    <p className="text-[#7a7a7a] text-sm">Select a creator.</p>
+                  ) : (
+                    <div className="grid gap-4">
+                      <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3 text-[11px] font-mono grid gap-1.5">
+                        <div className="flex"><span className="text-[#7a7a7a] w-12">From:</span><span className="text-ink">campaigns@creatorscout.app</span></div>
+                        <div className="flex"><span className="text-[#7a7a7a] w-12">To:</span><span className="text-ink">{activeCreator.creator?.contacts[0]?.value || "—"}</span></div>
+                      </div>
+
+                      <textarea
+                        key={activeCreator.creator_id}
+                        id="outreach-composer"
+                        className="w-full min-h-[260px] rounded-lg border border-[#e8e4df] bg-white p-4 font-mono text-[11px] leading-relaxed text-ink resize-none focus:outline-none focus:border-[#c4bfb7] focus:shadow-sm transition-all"
+                        defaultValue={
+                          activeCreator.outreach_draft && typeof activeCreator.outreach_draft === "object"
+                            ? `Subject: ${(activeCreator.outreach_draft as { subject?: string; body?: string }).subject || ""}\n\n${(activeCreator.outreach_draft as { subject?: string; body?: string }).body || ""}`
+                            : `Subject: Partnership — ${campaign.brief.brand_name}\n\nHi ${activeCreator.creator?.display_name},\n\nI discovered your content and think you'd be a great fit for ${campaign.brief.brand_name}'s upcoming ${campaign.goal} campaign.\n\n${activeCreator.recommended_pitch}\n\nOpen to a chat?\n\nBest,\n${campaign.brief.brand_name}`
+                        }
+                      />
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            copyText(`Hi ${activeCreator.creator?.display_name || "there"},\n\nPartnership inquiry from ${campaign.brief.brand_name}`, "draft");
+                          }}
+                          className="px-4 py-2 rounded-lg border border-[#e8e4df] text-xs font-semibold text-ink hover:bg-[#f3f0eb] transition cursor-pointer"
+                        >
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onStatusChange(activeCreator.creator_id, "contacted");
+                            setActiveTab("crm");
+                          }}
+                          className="px-4 py-2 rounded-lg glow-btn-accent text-xs font-semibold cursor-pointer"
+                        >
+                          Mark Contacted
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Tab: CRM ── */}
+            {activeTab === "crm" && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                <div className="mb-6">
+                  <h2 className="text-xl font-semibold text-ink tracking-tight">Pipeline</h2>
+                </div>
+
+                {creators.length === 0 ? (
+                  <div className="notebook-page p-16 text-center">
+                    <p className="text-ink font-semibold text-sm">Empty pipeline</p>
+                  </div>
+                ) : (
+                  <div className="flex gap-4 overflow-x-auto scrollbar-thin pb-4 -mx-8 px-8">
+                    {CRM_COLUMNS.map((col) => {
+                      const colCreators = creators.filter((c) => c.status === col.id);
+                      return (
+                        <div key={col.id} className="shrink-0 w-56 flex flex-col rounded-xl border border-[#e8e4df] bg-white" style={{ minHeight: 400 }}>
+                          <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#e8e4df] bg-[#f8f6f2] rounded-t-xl">
+                            <span className="text-[11px] font-semibold text-ink">{col.label}</span>
+                            <span className="text-[10px] font-mono text-[#7a7a7a]">{colCreators.length}</span>
+                          </div>
+                          <div className="flex-1 p-2 grid gap-2 content-start overflow-y-auto scrollbar-thin">
+                            {colCreators.map((c) => {
+                              const name = c.creator?.display_name || c.creator_id;
+                              return (
+                                <div key={c.id} className="rounded-lg border border-[#e8e4df] bg-[#faf9f6] p-3 hover:border-[#d4cfc8] hover:shadow-sm transition-all">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <Avatar name={name} size="sm" />
+                                    <p className="text-xs font-semibold text-ink truncate">{name}</p>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-1 mt-3">
+                                    <span className="text-[9px] font-mono text-[#7a7a7a]">Score: {c.fit_score}</span>
+                                    <select
+                                      value={c.status}
+                                      onChange={(e) => onStatusChange(c.creator_id, e.target.value)}
+                                      className="text-[9px] font-semibold bg-white border border-[#e8e4df] rounded-md px-1.5 py-1 text-ink appearance-none cursor-pointer hover:border-[#d4cfc8] focus:outline-none"
+                                    >
+                                      {CRM_COLUMNS.map((col) => (
+                                        <option key={col.id} value={col.id}>{col.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {/* ── Tab: Export ── */}
+            {activeTab === "export" && (
+              <motion.div className="max-w-2xl mx-auto" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                <div className="mb-8">
+                  <h2 className="text-xl font-semibold text-ink tracking-tight">Export Data</h2>
+                </div>
+
+                <div className="notebook-page p-6">
+                  <div className="grid grid-cols-2 gap-4 mb-6 text-xs border-b border-[#e8e4df] pb-6">
+                    {[
+                      ["Campaign", campaign.brief.brand_name || "—"],
+                      ["Goal", campaign.goal],
+                      ["Records", String(creators.length)],
+                    ].map(([label, val]) => (
+                      <div key={label}>
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-1">{label}</p>
+                        <p className="font-semibold text-ink font-mono">{val}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    id="export-csv-btn"
+                    onClick={onExport}
+                    disabled={creators.length === 0}
+                    className="glow-btn w-full rounded-xl py-3 text-sm font-semibold cursor-pointer disabled:opacity-50"
+                  >
+                    Download CSV
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// ─── Root Component ────────────────────────────────────────────────────────────
+export default function Home() {
+  const [user, setUser] = useState<any>(null);
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [creators, setCreators] = useState<CampaignCreator[]>([]);
+  const [apiHealth, setApiHealth] = useState<ApiHealth>("checking");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isFindingCreators, setIsFindingCreators] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const CRAWLER_LOGS = [
+    "Resolving domain...",
+    "Crawling pages...",
+    "Extracting brand DNA...",
+    "Building campaign brief...",
+    "Done!",
+  ];
+  const [crawlerLogIdx, setCrawlerLogIdx] = useState(0);
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const t = setInterval(() => setCrawlerLogIdx((p) => (p + 1) % CRAWLER_LOGS.length), 1200);
+    return () => clearInterval(t);
+  }, [isAnalyzing]);
+
+  useEffect(() => {
+    api.checkHealth()
+      .then(() => setApiHealth("online"))
+      .catch(() => setApiHealth("offline"));
+  }, []);
+
+  useEffect(() => {
+    async function checkUser() {
+      try {
+        const insforge = getInsForgeClient();
+        const { data } = await insforge.auth.getCurrentUser();
+        if (data?.user) {
+          setUser(data.user);
+        }
+      } catch (err) {
+        console.error("Not authenticated with InsForge:", err);
+      }
+    }
+    if (hasInsForgeConfig) {
+      checkUser();
+    }
+  }, []);
+
+  async function handleSignOut() {
+    try {
+      const insforge = getInsForgeClient();
+      await insforge.auth.signOut();
+      setUser(null);
+    } catch (err) {
+      console.error("Sign out failed:", err);
+    }
+  }
+
+  async function handleLaunch({ brand_url, goal, geo, platforms }: { brand_url: string; goal: string; geo: string; platforms: string[] }) {
+    setIsAnalyzing(true);
+    setCrawlerLogIdx(0);
+    setMessage("");
+    try {
+      const res = await api.createCampaign({ brand_url, goal, geo, platforms, provider: "youtube", query_limit: 5, per_query_limit: 10 });
+      setCampaign(res.data.campaign);
+      setMessage(`Success: Extracted ${res.data.campaign.brief.brand_name || brand_url}`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Error analyzing brand.");
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
+  async function handleFindCreators() {
+    if (!campaign) return;
+    setIsFindingCreators(true);
+    setMessage("");
+    try {
+      const res = await api.buildShortlist(campaign.id, { limit: 30 });
+      setCreators(res.data.shortlist);
+      setMessage(`Shortlisted ${res.data.shortlist.length} creators.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Discovery failed.");
+    } finally {
+      setIsFindingCreators(false);
+    }
+  }
+
+  function handleStatusChange(id: string, status: string) {
+    setCreators((prev) => prev.map((c) => c.creator_id === id ? { ...c, status } : c));
+  }
+
+  function handlePitchChange(id: string, pitch: string) {
+    setCreators((prev) => prev.map((c) => c.creator_id === id ? { ...c, recommended_pitch: pitch } : c));
+  }
+
+  function handleExport() {
+    if (!campaign || !creators.length) return;
+    const rows = [
+      ["Creator", "Score", "Bucket", "Status", "Niche", "Location", "Platforms", "Contact", "Pitch"],
+      ...creators.map((item) => [
+        item.creator?.display_name ?? item.creator_id,
+        String(item.fit_score),
+        item.bucket,
+        item.status,
+        item.creator?.primary_niche ?? "",
+        item.creator?.location ?? "",
+        item.creator?.accounts.map((a) => a.platform).join("; ") ?? "",
+        item.creator?.contacts.map((c) => c.value).join("; ") ?? "",
+        item.recommended_pitch,
+      ]),
+    ];
+    const csv = rows.map((row) => row.map((c) => `"${String(c).replaceAll('"', '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${campaign.brief.brand_name || "shortlist"}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (isAnalyzing) {
+    return (
+      <div className="min-h-screen bg-[#faf9f6] grid place-items-center px-6">
+        <motion.div
+          className="w-full max-w-sm notebook-page p-8"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4 }}
+        >
+          <div className="flex items-center gap-3 mb-5 border-b border-[#e8e4df] pb-4">
+            <span className="w-3 h-3 rounded-full bg-accent animate-pulse-ring" />
+            <span className="text-sm font-semibold text-ink">Analyzing your brand</span>
+          </div>
+          <div className="font-mono text-xs space-y-2.5">
+            {CRAWLER_LOGS.map((log, i) => {
+              const done = i < crawlerLogIdx;
+              const active = i === crawlerLogIdx;
+              return (
+                <motion.div
+                  key={i}
+                  className={`flex items-center gap-2 ${done ? "text-[#b5afa6]" : active ? "text-ink" : "text-[#d4cfc8]"}`}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.15 }}
+                >
+                  <span>{done ? "✓" : active ? "▸" : "○"}</span>
+                  <span>{log}</span>
+                  {active && <span className="w-1.5 h-3 bg-accent inline-block animate-pulse rounded-sm" />}
+                </motion.div>
+              );
+            })}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  if (campaign) {
+    return (
+      <Workspace
+        campaign={campaign}
+        creators={creators}
+        onReset={() => { setCampaign(null); setCreators([]); setMessage(""); }}
+        onFindCreators={handleFindCreators}
+        onStatusChange={handleStatusChange}
+        onPitchChange={handlePitchChange}
+        onExport={handleExport}
+        isFindingCreators={isFindingCreators}
+        message={message}
+        onDismissMessage={() => setMessage("")}
+      />
+    );
+  }
+
+  return (
+    <>
+      <Navbar
+        onGetStarted={() => document.getElementById("try-form")?.scrollIntoView({ behavior: "smooth" })}
+        user={user}
+        onSignOut={handleSignOut}
+      />
+      <LandingPage onLaunch={handleLaunch} apiHealth={apiHealth} />
+    </>
+  );
+}
+

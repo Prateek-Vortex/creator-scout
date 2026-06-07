@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data
+data/*.sqlite3
+data/*.sqlite3-*
+
+# Node / npm
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Misc
+.DS_Store
+*.pem
+.vercel
+
+# InsForge & AI agent skills
+.insforge
+.agent
+.agents
+.augment
+.claude
+.cline
+.github/copilot*
+.kilocode
+.qoder
+.qwen
+.roo
+.trae
+.windsurf

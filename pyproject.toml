@@ -1,0 +1,10 @@
+[project]
+name = "creator-scout"
+version = "0.1.0"
+description = "Creator Scout first-party discovery engine and API scaffold"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+

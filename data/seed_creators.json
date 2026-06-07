@@ -1,0 +1,207 @@
+[
+  {
+    "display_name": "Aditi Skin Notes",
+    "primary_niche": "skincare",
+    "location": "India, Mumbai",
+    "languages": ["en", "hi"],
+    "summary": "Dermatology-aware skincare educator focused on acne-prone routines, barrier repair, and affordable Indian products.",
+    "topics": ["skincare", "acne", "moisturizer", "sensitive skin", "indian beauty"],
+    "accounts": [
+      {
+        "platform": "instagram",
+        "handle": "aditiskinnotes",
+        "profile_url": "https://instagram.com/aditiskinnotes",
+        "follower_count": 42000,
+        "avg_views": 18000,
+        "engagement_rate": 0.047,
+        "bio": "Acne-safe routines, barrier repair, Indian skincare. Business: aditi@skinnotes.example"
+      },
+      {
+        "platform": "youtube",
+        "handle": "aditiskinnotes",
+        "profile_url": "https://youtube.com/@aditiskinnotes",
+        "subscriber_count": 18500,
+        "avg_views": 7200,
+        "bio": "Honest reviews for acne-prone and sensitive skin."
+      }
+    ],
+    "contacts": [
+      {
+        "contact_type": "email",
+        "value": "aditi@skinnotes.example",
+        "source_url": "https://aditiskinnotes.example/media-kit",
+        "permission_basis": "public_business_contact",
+        "confidence": 0.88
+      }
+    ],
+    "sources": [
+      {
+        "source_url": "https://aditiskinnotes.example/media-kit",
+        "source_type": "creator_owned_media_kit",
+        "confidence": 0.9,
+        "fields_found": {
+          "email": "aditi@skinnotes.example",
+          "topics": "acne-safe skincare, moisturizer reviews, barrier repair",
+          "location": "Mumbai, India"
+        }
+      }
+    ]
+  },
+  {
+    "display_name": "Rohan Reviews Tech",
+    "primary_niche": "consumer tech",
+    "location": "India, Bengaluru",
+    "languages": ["en", "hi"],
+    "summary": "YouTube-first reviewer covering budget phones, creator tools, desk setups, and practical app workflows.",
+    "topics": ["tech", "youtube", "apps", "gadgets", "creator tools"],
+    "accounts": [
+      {
+        "platform": "youtube",
+        "handle": "rohanreviewstech",
+        "profile_url": "https://youtube.com/@rohanreviewstech",
+        "subscriber_count": 76000,
+        "avg_views": 31000,
+        "engagement_rate": 0.039,
+        "bio": "Useful tech, no hype. Email on website."
+      },
+      {
+        "platform": "x",
+        "handle": "rohanreviews",
+        "profile_url": "https://x.com/rohanreviews",
+        "follower_count": 12200,
+        "bio": "Tech reviewer and workflow nerd."
+      }
+    ],
+    "sources": [
+      {
+        "source_url": "https://rohanreviewstech.example/contact",
+        "source_type": "creator_owned_site",
+        "confidence": 0.82,
+        "fields_found": {
+          "contact": "Use contact form for product reviews",
+          "topics": "budget phones, productivity apps, desk setups"
+        }
+      }
+    ]
+  },
+  {
+    "display_name": "Nisha Fits",
+    "primary_niche": "fashion",
+    "location": "India, Delhi",
+    "languages": ["en", "hi"],
+    "summary": "Short-form styling creator focused on affordable outfits, college fashion, and festive looks.",
+    "topics": ["fashion", "styling", "college fashion", "festive looks", "affordable outfits"],
+    "accounts": [
+      {
+        "platform": "tiktok",
+        "handle": "nishafits",
+        "profile_url": "https://tiktok.com/@nishafits",
+        "follower_count": 98000,
+        "avg_views": 54000,
+        "engagement_rate": 0.061,
+        "bio": "Affordable fits, GRWM, festive styling."
+      },
+      {
+        "platform": "instagram",
+        "handle": "nishafits",
+        "profile_url": "https://instagram.com/nishafits",
+        "follower_count": 68000,
+        "avg_views": 29000,
+        "bio": "Outfit ideas for students and first jobs."
+      }
+    ],
+    "sources": [
+      {
+        "source_url": "https://nishafits.example/collab",
+        "source_type": "creator_owned_site",
+        "confidence": 0.78,
+        "fields_found": {
+          "topics": "college fashion, affordable styling, festive looks",
+          "contact_policy": "Brand collaborations through form"
+        }
+      }
+    ]
+  },
+  {
+    "display_name": "The Pantry Letter",
+    "primary_niche": "food",
+    "location": "United States, Austin",
+    "languages": ["en"],
+    "summary": "Newsletter and blog creator writing about weeknight cooking, pantry systems, and budget-friendly recipes.",
+    "topics": ["food", "newsletter", "recipes", "home cooking", "budget meals"],
+    "accounts": [
+      {
+        "platform": "newsletter",
+        "handle": "thepantryletter",
+        "profile_url": "https://thepantryletter.example",
+        "follower_count": 23000,
+        "bio": "Weekly pantry-first cooking ideas. hello@thepantryletter.example"
+      },
+      {
+        "platform": "pinterest",
+        "handle": "thepantryletter",
+        "profile_url": "https://pinterest.com/thepantryletter",
+        "follower_count": 41000,
+        "bio": "Recipe boards and meal prep ideas."
+      }
+    ],
+    "contacts": [
+      {
+        "contact_type": "email",
+        "value": "hello@thepantryletter.example",
+        "source_url": "https://thepantryletter.example/sponsor",
+        "permission_basis": "public_business_contact",
+        "confidence": 0.84
+      }
+    ],
+    "sources": [
+      {
+        "source_url": "https://thepantryletter.example/sponsor",
+        "source_type": "creator_owned_site",
+        "confidence": 0.86,
+        "fields_found": {
+          "email": "hello@thepantryletter.example",
+          "topics": "recipes, meal prep, budget meals"
+        }
+      }
+    ]
+  },
+  {
+    "display_name": "Mira Live Builds",
+    "primary_niche": "gaming and tech",
+    "location": "United States, Seattle",
+    "languages": ["en"],
+    "summary": "Twitch creator streaming cozy games, PC builds, creator hardware, and community Q&A.",
+    "topics": ["gaming", "twitch", "pc builds", "creator hardware", "cozy games"],
+    "accounts": [
+      {
+        "platform": "twitch",
+        "handle": "miralivebuilds",
+        "profile_url": "https://twitch.tv/miralivebuilds",
+        "follower_count": 36000,
+        "avg_views": 1400,
+        "engagement_rate": 0.052,
+        "bio": "Cozy games and PC build streams."
+      },
+      {
+        "platform": "youtube",
+        "handle": "miralivebuilds",
+        "profile_url": "https://youtube.com/@miralivebuilds",
+        "subscriber_count": 22000,
+        "avg_views": 9500,
+        "bio": "Stream highlights, gear tests, and build guides."
+      }
+    ],
+    "sources": [
+      {
+        "source_url": "https://miralivebuilds.example/brands",
+        "source_type": "creator_owned_media_kit",
+        "confidence": 0.8,
+        "fields_found": {
+          "topics": "gaming, PC builds, creator hardware",
+          "brand_fit": "hardware, desks, creator tools"
+        }
+      }
+    ]
+  }
+]

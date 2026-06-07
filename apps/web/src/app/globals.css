@@ -1,0 +1,298 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: "Inter", var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", var(--font-geist-mono), ui-monospace, monospace;
+  --font-handwriting: "Caveat", cursive;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-ink: #1a1a1a;
+  --color-muted: #7a7a7a;
+  --color-line: #e8e4df;
+  --color-soft: #f3f0eb;
+  --color-panel: #ffffff;
+  --color-cream: #faf9f6;
+  --color-brand: #2d2d2d;
+  --color-brand-dark: #1a1a1a;
+  --color-accent: #e85d4a;
+  --color-accent-teal: #2ba8a0;
+  --color-accent-lavender: #9b7de8;
+  --color-accent-amber: #e8a33c;
+  --color-accent-coral: #e85d4a;
+  --color-warning: #e8a33c;
+  --color-danger: #d94040;
+  --color-success: #3aaa6f;
+}
+
+:root {
+  --background: #faf9f6;
+  --foreground: #1a1a1a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  scroll-behavior: smooth;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  position: relative;
+  min-height: 100%;
+}
+
+/* ─── Dot Grid overlay (subtle notebook dots) ─── */
+.grid-overlay {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* ─── Scrollbar ─── */
+.scrollbar-thin::-webkit-scrollbar {
+  height: 5px;
+  width: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #d4cfc8;
+  border-radius: 999px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #b5afa6;
+}
+
+/* ─── Paper / Panel Surfaces ─── */
+.glass-panel {
+  background: #ffffff;
+  border: 1px solid #e8e4df;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+}
+.glass-card {
+  background: #ffffff;
+  border: 1px solid #e8e4df;
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-card:hover {
+  border-color: #d4cfc8;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.07);
+  transform: translateY(-3px);
+}
+
+/* ─── Sticker Cards (Polaroid style) ─── */
+.sticker-card {
+  background: #ffffff;
+  border: 1px solid #e8e4df;
+  border-radius: 12px;
+  box-shadow:
+    2px 4px 16px rgba(0, 0, 0, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+.sticker-card::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 24px;
+  height: 24px;
+  background: linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.02) 50%);
+  border-radius: 0 0 12px 0;
+  pointer-events: none;
+}
+.sticker-card:hover {
+  box-shadow:
+    4px 8px 28px rgba(0, 0, 0, 0.10),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  transform: translateY(-4px) rotate(0deg) !important;
+}
+
+/* Sticker rotations (applied inline via framer-motion or CSS) */
+.sticker-rotate-1 { transform: rotate(-2deg); }
+.sticker-rotate-2 { transform: rotate(1.5deg); }
+.sticker-rotate-3 { transform: rotate(-1deg); }
+.sticker-rotate-4 { transform: rotate(2.5deg); }
+
+/* ─── Notebook Page (layered paper) ─── */
+.notebook-page {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.05),
+    0 0 0 1px rgba(0, 0, 0, 0.03),
+    4px 8px 0 -2px #f5f2ed,
+    4px 8px 0 -1px rgba(0, 0, 0, 0.03),
+    8px 16px 0 -4px #eeebe5,
+    8px 16px 0 -3px rgba(0, 0, 0, 0.02);
+  position: relative;
+}
+
+/* ─── Badge Stickers (vibrant solid-color) ─── */
+.badge-sticker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow: 1px 2px 6px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s ease;
+}
+.badge-sticker:hover {
+  transform: scale(1.05);
+}
+.badge-coral {
+  background: #fde8e4;
+  color: #c4402d;
+  border: 1px solid #f5c4ba;
+}
+.badge-teal {
+  background: #e0f5f3;
+  color: #1e7a72;
+  border: 1px solid #b5e5e0;
+}
+.badge-lavender {
+  background: #ece4fb;
+  color: #6b4ec0;
+  border: 1px solid #cebdf5;
+}
+.badge-amber {
+  background: #fdf0db;
+  color: #b07920;
+  border: 1px solid #f0d9a6;
+}
+
+/* ─── Handwriting accent ─── */
+.handwriting {
+  font-family: var(--font-handwriting);
+}
+
+/* ─── Inputs ─── */
+.glass-input {
+  background: #ffffff;
+  border: 1.5px solid #e0dbd4;
+  color: #1a1a1a;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.02);
+}
+.glass-input:focus {
+  border-color: #c4bfb7;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.02), 0 0 0 3px rgba(0,0,0,0.04);
+  outline: none;
+}
+.glass-input::placeholder {
+  color: #b5afa6;
+}
+
+/* ─── Buttons ─── */
+.glow-btn {
+  background: #1a1a1a;
+  color: #faf9f6;
+  font-weight: 600;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.10);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: none;
+}
+.glow-btn:hover:not(:disabled) {
+  background: #333;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.14);
+}
+.glow-btn-accent {
+  background: #e85d4a;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 10px;
+  border: none;
+  transition: all 0.2s ease;
+}
+.glow-btn-accent:hover:not(:disabled) {
+  background: #d04e3c;
+  transform: translateY(-1px);
+}
+.glow-border {
+  border: 1px solid #e8e4df;
+}
+
+/* ─── Animations ─── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes floatGently {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.animate-float {
+  animation: floatGently 4s ease-in-out infinite;
+}
+
+@keyframes slideInFromBottom {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slideInFromBottom 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in {
+  animation: scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.animate-shimmer {
+  background: linear-gradient(90deg, #f3f0eb 25%, #e8e4df 50%, #f3f0eb 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(232, 93, 74, 0.3); }
+  70% { box-shadow: 0 0 0 8px rgba(232, 93, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(232, 93, 74, 0); }
+}
+.animate-pulse-ring {
+  animation: pulseRing 2s ease-out infinite;
+}
+
+/* Stagger animation delays */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.10s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.20s; }
+.stagger-5 { animation-delay: 0.25s; }
+.stagger-6 { animation-delay: 0.30s; }
+
+/* ─── Focus ring ─── */
+.focus-ring:focus-visible {
+  outline: 2px solid #b5afa6;
+  outline-offset: 2px;
+}
+
+/* ─── Selection color ─── */
+::selection {
+  background: rgba(232, 93, 74, 0.15);
+  color: inherit;
+}
