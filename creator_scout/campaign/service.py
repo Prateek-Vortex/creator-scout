@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 
 from creator_scout.brand.service import BrandScanService
 from creator_scout.discovery.jobs import enqueue_discovery_query_job
@@ -32,6 +33,9 @@ class CampaignService:
         provider: str = "youtube",
         query_limit: int = 5,
         per_query_limit: int = 10,
+        discovery_mode: str = "safe_fanout",
+        max_providers_per_query: int = 2,
+        max_enrichment_urls_per_query: int = 5,
     ) -> dict:
         brand_url = brand_url.strip()
         if not brand_url:
@@ -39,8 +43,14 @@ class CampaignService:
 
         normalized_platforms = _normalize_platforms(platforms)
         provider = (provider or "youtube").strip().lower()
+        discovery_mode = (discovery_mode or "safe_fanout").strip().lower()
+        if discovery_mode not in {"safe_fanout", "single_provider"}:
+            raise ValueError("Unsupported discovery_mode")
         query_limit = min(max(int(query_limit), 1), 12)
         per_query_limit = min(max(int(per_query_limit), 1), 50)
+        max_providers_per_query = min(max(int(max_providers_per_query), 1), 3)
+        max_enrichment_urls_per_query = min(max(int(max_enrichment_urls_per_query), 0), 20)
+        selected_providers = _providers_for_campaign(provider, discovery_mode, max_providers_per_query)
 
         scan = self.brand_scan_service.scan(
             brand_url,
@@ -66,17 +76,19 @@ class CampaignService:
 
         job_ids: list[str] = []
         for query in search_queries:
-            job_id = enqueue_discovery_query_job(
-                self.store,
-                query=query,
-                provider=provider,
-                limit=per_query_limit,
-                org_id=org_id,
-                api_key_id=api_key_id,
-                campaign_id=campaign_id,
-            )
-            self.store.link_campaign_job(campaign_id, job_id, query, provider)
-            job_ids.append(job_id)
+            for selected_provider in selected_providers:
+                job_id = enqueue_discovery_query_job(
+                    self.store,
+                    query=query,
+                    provider=selected_provider,
+                    limit=per_query_limit,
+                    org_id=org_id,
+                    api_key_id=api_key_id,
+                    campaign_id=campaign_id,
+                    max_enrichment_urls=max_enrichment_urls_per_query,
+                )
+                self.store.link_campaign_job(campaign_id, job_id, query, selected_provider)
+                job_ids.append(job_id)
 
         return {
             "campaign": self.get_campaign(campaign_id, org_id=org_id),
@@ -264,6 +276,7 @@ Do not include any formatting or conversational filler, just the JSON."""
                 creator = None
             cleaned = _clean_shortlist_row(row)
             cleaned["creator"] = to_jsonable(creator) if creator else None
+            cleaned["outreach_messages"] = self.store.list_outreach_messages(row["id"])
             return cleaned
 
         max_workers = min(10, len(rows) or 1)
@@ -393,6 +406,19 @@ def _dedupe(values: list[str]) -> list[str]:
             result.append(normalized)
             seen.add(normalized.lower())
     return result
+
+
+def _providers_for_campaign(provider: str, discovery_mode: str, max_providers_per_query: int) -> list[str]:
+    provider = (provider or "youtube").strip().lower()
+    if discovery_mode == "single_provider":
+        return _dedupe([provider])[:max_providers_per_query]
+
+    providers = ["youtube"]
+    if os.environ.get("TINYFISH_API_KEY"):
+        providers.append("tinyfish")
+    if provider not in providers:
+        providers.append(provider)
+    return _dedupe(providers)[:max_providers_per_query]
 
 
 def _bucket_for_score(score: int, missing_fields: list[str], risk_flags: list[str]) -> str:

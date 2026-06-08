@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { motion, useScroll, useTransform, useSpring } from "framer-motion";
 import { api } from "@/lib/api";
-import type { Campaign, CampaignCreator } from "@/lib/api";
+import type { Campaign, CampaignCreator, CreatorContact, OutreachConfig, OutreachMessage } from "@/lib/api";
 import { getInsForgeClient, hasInsForgeConfig } from "@/lib/insforge";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -62,6 +62,69 @@ function jobSummaryFor(campaign: Campaign) {
     ...summary,
     pending: summary.pending ?? ((summary.queued ?? 0) + (summary.running ?? 0)),
     total: summary.total ?? campaign.jobs.length,
+  };
+}
+
+function latestOutreachMessage(item: CampaignCreator | null): OutreachMessage | null {
+  const messages = item?.outreach_messages ?? [];
+  return messages.length ? messages[0] : null;
+}
+
+function sendableEmailContact(item: CampaignCreator | null): CreatorContact | null {
+  return (item?.creator?.contacts ?? []).find((contact) => {
+    const permission = contact.permission_basis?.toLowerCase();
+    return (
+      contact.contact_type?.toLowerCase() === "email" &&
+      contact.value.includes("@") &&
+      permission === "public_business_contact" &&
+      !contact.do_not_contact &&
+      !contact.suppressed_at &&
+      Boolean(contact.source_url)
+    );
+  }) ?? null;
+}
+
+function outreachBlockReason(
+  item: CampaignCreator | null,
+  config: OutreachConfig | null,
+  isSending: boolean
+): string | null {
+  if (!item) return "Select a creator";
+  if (isSending) return "Sending...";
+  if (!config) return "Checking AutoSend";
+  if (!config.has_api_key || !config.has_from_email) return "AutoSend config missing";
+  if (!config.has_unsubscribe_group) return "Unsubscribe group missing";
+  const emailContacts = item.creator?.contacts.filter((contact) => contact.contact_type?.toLowerCase() === "email") ?? [];
+  if (!sendableEmailContact(item)) {
+    if (emailContacts.some((contact) => contact.do_not_contact || contact.suppressed_at)) return "Contact suppressed";
+    return "No valid public business email";
+  }
+  const latest = latestOutreachMessage(item);
+  if (latest && ["sent", "delivered", "opened"].includes(latest.status)) return `Already ${latest.status}`;
+  return null;
+}
+
+function defaultOutreachText(campaign: Campaign, item: CampaignCreator): string {
+  if (item.outreach_draft && typeof item.outreach_draft === "object") {
+    return `Subject: ${item.outreach_draft.subject || ""}\n\n${item.outreach_draft.body || ""}`.trim();
+  }
+  return `Subject: Partnership - ${campaign.brief.brand_name}\n\nHi ${item.creator?.display_name || "there"},\n\nI discovered your content and think you'd be a great fit for ${campaign.brief.brand_name}'s upcoming ${campaign.goal} campaign.\n\n${item.recommended_pitch}\n\nOpen to a chat?\n\nBest,\n${campaign.brief.brand_name}`;
+}
+
+function parseOutreachComposer(text: string, fallbackSubject: string): { subject: string; body: string } {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const lines = normalized.split("\n");
+  const firstLine = lines[0] ?? "";
+  const subjectMatch = firstLine.match(/^Subject:\s*(.*)$/i);
+  if (subjectMatch) {
+    return {
+      subject: subjectMatch[1].trim() || fallbackSubject,
+      body: lines.slice(1).join("\n").trim(),
+    };
+  }
+  return {
+    subject: fallbackSubject,
+    body: normalized,
   };
 }
 
@@ -607,8 +670,11 @@ function Workspace({
   onNotesChange,
   onNotesSave,
   onExport,
+  onSendOutreach,
   isFindingCreators,
   isExporting,
+  isSendingOutreach,
+  outreachConfig,
   message,
   onDismissMessage,
 }: {
@@ -622,8 +688,11 @@ function Workspace({
   onNotesChange: (id: string, notes: string) => void;
   onNotesSave: (id: string, notes: string) => void;
   onExport: () => void;
+  onSendOutreach: (id: string, subject: string, body: string) => void;
   isFindingCreators: boolean;
   isExporting: boolean;
+  isSendingOutreach: boolean;
+  outreachConfig: OutreachConfig | null;
   message: string;
   onDismissMessage: () => void;
 }) {
@@ -637,6 +706,9 @@ function Workspace({
     () => creators.find((c) => c.creator_id === selectedId) ?? creators[0] ?? null,
     [creators, selectedId]
   );
+  const activeSendableContact = sendableEmailContact(activeCreator);
+  const activeOutreachMessage = latestOutreachMessage(activeCreator);
+  const sendBlockReason = outreachBlockReason(activeCreator, outreachConfig, isSendingOutreach);
 
   const TABS = [
     { id: "brief",     label: "Brand Brief",      icon: <Icon.brief /> },
@@ -1103,7 +1175,11 @@ function Workspace({
                         </div>
                         <div>
                           <p className="text-[9px] font-bold uppercase text-[#7a7a7a] mb-1">Compliance</p>
-                          <p className="text-ink font-mono text-[10px]">{activeCreator.creator?.contacts[0]?.permission_basis || "Public"}</p>
+                          <p className="text-ink font-mono text-[10px]">{activeSendableContact?.permission_basis || sendBlockReason || "Ready"}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-bold uppercase text-[#7a7a7a] mb-1">Last Send</p>
+                          <p className="text-ink font-mono text-[10px]">{activeOutreachMessage?.status || "No send"}</p>
                         </div>
                       </div>
                     </div>
@@ -1121,19 +1197,16 @@ function Workspace({
                   ) : (
                     <div className="grid gap-4">
                       <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3 text-[11px] font-mono grid gap-1.5">
-                        <div className="flex"><span className="text-[#7a7a7a] w-12">From:</span><span className="text-ink">campaigns@creatorscout.app</span></div>
-                        <div className="flex"><span className="text-[#7a7a7a] w-12">To:</span><span className="text-ink">{activeCreator.creator?.contacts[0]?.value || "—"}</span></div>
+                        <div className="flex"><span className="text-[#7a7a7a] w-12">From:</span><span className="text-ink">{outreachConfig?.from_email || "AutoSend sender"}</span></div>
+                        <div className="flex"><span className="text-[#7a7a7a] w-12">To:</span><span className="text-ink">{activeSendableContact?.value || "-"}</span></div>
+                        <div className="flex"><span className="text-[#7a7a7a] w-12">Status:</span><span className={sendBlockReason ? "text-warning" : "text-success"}>{sendBlockReason || "Ready to send"}</span></div>
                       </div>
 
                       <textarea
                         key={activeCreator.creator_id}
                         id="outreach-composer"
                         className="w-full min-h-[260px] rounded-lg border border-[#e8e4df] bg-white p-4 font-mono text-[11px] leading-relaxed text-ink resize-none focus:outline-none focus:border-[#c4bfb7] focus:shadow-sm transition-all"
-                        defaultValue={
-                          activeCreator.outreach_draft && typeof activeCreator.outreach_draft === "object"
-                            ? `Subject: ${(activeCreator.outreach_draft as { subject?: string; body?: string }).subject || ""}\n\n${(activeCreator.outreach_draft as { subject?: string; body?: string }).body || ""}`
-                            : `Subject: Partnership — ${campaign.brief.brand_name}\n\nHi ${activeCreator.creator?.display_name},\n\nI discovered your content and think you'd be a great fit for ${campaign.brief.brand_name}'s upcoming ${campaign.goal} campaign.\n\n${activeCreator.recommended_pitch}\n\nOpen to a chat?\n\nBest,\n${campaign.brief.brand_name}`
-                        }
+                        defaultValue={defaultOutreachText(campaign, activeCreator)}
                       />
 
                       <div className="flex justify-end gap-2">
@@ -1149,12 +1222,19 @@ function Workspace({
                         <button
                           type="button"
                           onClick={() => {
-                            onStatusChange(activeCreator.creator_id, "contacted");
-                            setActiveTab("crm");
+                            const composer = document.getElementById("outreach-composer") as HTMLTextAreaElement | null;
+                            const fallback = activeCreator.outreach_draft?.subject || `Partnership - ${campaign.brief.brand_name}`;
+                            const parsed = parseOutreachComposer(
+                              composer?.value || defaultOutreachText(campaign, activeCreator),
+                              fallback
+                            );
+                            onSendOutreach(activeCreator.creator_id, parsed.subject, parsed.body);
                           }}
-                          className="px-4 py-2 rounded-lg glow-btn-accent text-xs font-semibold cursor-pointer"
+                          disabled={Boolean(sendBlockReason)}
+                          title={sendBlockReason || "Send with AutoSend"}
+                          className="px-4 py-2 rounded-lg glow-btn-accent text-xs font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          Mark Contacted
+                          {isSendingOutreach ? "Sending..." : "Send with AutoSend"}
                         </button>
                       </div>
                     </div>
@@ -1266,6 +1346,8 @@ export default function Home() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isFindingCreators, setIsFindingCreators] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isSendingOutreach, setIsSendingOutreach] = useState(false);
+  const [outreachConfig, setOutreachConfig] = useState<OutreachConfig | null>(null);
   const [message, setMessage] = useState("");
 
   const [crawlerLogIdx, setCrawlerLogIdx] = useState(0);
@@ -1279,6 +1361,15 @@ export default function Home() {
     api.checkHealth()
       .then(() => setApiHealth("online"))
       .catch(() => setApiHealth("offline"));
+  }, []);
+
+  useEffect(() => {
+    api.getOutreachConfig()
+      .then((res) => setOutreachConfig(res.data))
+      .catch((err) => {
+        console.error("Outreach config check failed:", err);
+        setOutreachConfig(null);
+      });
   }, []);
 
   useEffect(() => {
@@ -1326,7 +1417,18 @@ export default function Home() {
     setCrawlerLogIdx(0);
     setMessage("");
     try {
-      const res = await api.createCampaign({ brand_url, goal, geo, platforms, provider: "youtube", query_limit: 5, per_query_limit: 10 });
+      const res = await api.createCampaign({
+        brand_url,
+        goal,
+        geo,
+        platforms,
+        provider: "youtube",
+        discovery_mode: "safe_fanout",
+        query_limit: 5,
+        per_query_limit: 10,
+        max_providers_per_query: 2,
+        max_enrichment_urls_per_query: 5,
+      });
       setCampaign(res.data.campaign);
       const summary = jobSummaryFor(res.data.campaign);
       setMessage(`Success: queued ${summary.queued} discovery jobs for ${res.data.campaign.brief.brand_name || brand_url}.`);
@@ -1415,6 +1517,34 @@ export default function Home() {
     }
   }
 
+  async function handleSendOutreach(id: string, subject: string, body: string) {
+    if (!campaign) return;
+    setIsSendingOutreach(true);
+    setMessage("");
+    try {
+      const res = await api.sendOutreach(campaign.id, id, { subject, body });
+      const sentMessage = res.data.outreach_message;
+      const updatedCreator = res.data.campaign_creator;
+      setCreators((prev) => prev.map((creator) => {
+        if (creator.creator_id !== id) return creator;
+        return {
+          ...creator,
+          ...updatedCreator,
+          creator: updatedCreator.creator ?? creator.creator,
+          outreach_messages: [
+            sentMessage,
+            ...(updatedCreator.outreach_messages ?? creator.outreach_messages ?? []),
+          ],
+        };
+      }));
+      setMessage(`AutoSend accepted ${sentMessage.recipient_email || "the recipient"}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "AutoSend send failed.");
+    } finally {
+      setIsSendingOutreach(false);
+    }
+  }
+
   if (isAnalyzing) {
     return (
       <div className="min-h-screen bg-[#faf9f6] grid place-items-center px-6">
@@ -1465,8 +1595,11 @@ export default function Home() {
         onNotesChange={handleNotesChange}
         onNotesSave={handleNotesSave}
         onExport={handleExport}
+        onSendOutreach={handleSendOutreach}
         isFindingCreators={isFindingCreators}
         isExporting={isExporting}
+        isSendingOutreach={isSendingOutreach}
+        outreachConfig={outreachConfig}
         message={message}
         onDismissMessage={() => setMessage("")}
       />

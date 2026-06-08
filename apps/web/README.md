@@ -23,6 +23,11 @@ INSFORGE_API_KEY=<server-api-key>
 YOUTUBE_API_KEY=<youtube-api-key>
 TINYFISH_API_KEY=<optional-tinyfish-key>
 FIRECRAWL_API_KEY=<optional-firecrawl-key>
+AUTOSEND_API_KEY=<optional-autosend-key>
+AUTOSEND_FROM_EMAIL=<verified-sender@example.com>
+AUTOSEND_FROM_NAME=Creator Scout
+AUTOSEND_REPLY_TO_EMAIL=<optional-reply-to@example.com>
+AUTOSEND_UNSUBSCRIBE_GROUP_ID=<required-for-outreach-send>
 ```
 
 ## Run

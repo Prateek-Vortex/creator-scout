@@ -70,6 +70,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return
             self._send(200, self._service().usage(principal))
             return
+        if path == "/v1/outreach/config":
+            if principal is None:
+                self._send_error(401, "Missing or invalid API key")
+                return
+            self._send(200, self._service().outreach_config(principal))
+            return
         if path.startswith("/v1/campaigns/") and path.endswith("/creators"):
             if principal is None:
                 self._send_error(401, "Missing or invalid API key")
@@ -137,6 +143,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         principal = self._principal()
         try:
             payload = self._json_body()
+            if path == "/v1/webhooks/autosend":
+                self._send(200, self._service().handle_autosend_webhook(payload))
+                return
             if path == "/v1/discovery/search":
                 if principal is None:
                     self._send_error(401, "Missing or invalid API key")
@@ -154,6 +163,25 @@ class ApiHandler(BaseHTTPRequestHandler):
                     self._send_error(401, "Missing or invalid API key")
                     return
                 self._send(202, self._service().create_campaign(payload, principal))
+                return
+            if path.startswith("/v1/campaigns/") and path.endswith("/outreach/send"):
+                if principal is None:
+                    self._send_error(401, "Missing or invalid API key")
+                    return
+                parts = path.strip("/").split("/")
+                if (
+                    len(parts) != 7
+                    or parts[:2] != ["v1", "campaigns"]
+                    or parts[3] != "creators"
+                    or parts[5:] != ["outreach", "send"]
+                ):
+                    self._send_error(404, "Route not found")
+                    return
+                response = self._service().send_campaign_creator_outreach(parts[2], parts[4], payload, principal)
+                if response is None:
+                    self._send_error(404, "Campaign creator not found")
+                    return
+                self._send(200, response)
                 return
             if path.startswith("/v1/campaigns/") and path.endswith("/shortlist"):
                 if principal is None:

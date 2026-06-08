@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +13,7 @@ from creator_scout.discovery.compliance import assert_public_fetch_allowed
 from creator_scout.discovery.http import HttpResponse
 from creator_scout.discovery.ingest import ingest_records
 from creator_scout.discovery.jobs import enqueue_discovery_query_job, enqueue_refresh_job, run_job
-from creator_scout.discovery.store import DiscoveryStore
+from creator_scout.discovery.store import DiscoveryStore, to_uuid
 
 
 class FakeHttp:
@@ -190,6 +191,88 @@ class IngestionAdapterTestCase(unittest.TestCase):
                 self.assertEqual(request["campaign_id"], "camp_test")
             finally:
                 store.close()
+
+    def test_tinyfish_query_job_queues_allowed_enrichment_and_skips_restricted_urls(self) -> None:
+        original_key = os.environ.get("TINYFISH_API_KEY")
+        os.environ["TINYFISH_API_KEY"] = "fake-tinyfish"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                store = DiscoveryStore(Path(tmp) / "tinyfish-query-store-arg-ignored")
+                try:
+                    job_id = enqueue_discovery_query_job(
+                        store,
+                        query="skincare creator media kit",
+                        provider="tinyfish",
+                        limit=2,
+                        org_id="org_test",
+                        campaign_id="camp_test",
+                        max_enrichment_urls=3,
+                    )
+
+                    from creator_scout.discovery import jobs
+
+                    original = jobs.adapter_for_provider
+
+                    class FakeAdapter:
+                        provider = "tinyfish"
+
+                        def discover(self, query: str, limit: int = 10):
+                            return type(
+                                "Result",
+                                (),
+                                {
+                                    "provider": "tinyfish",
+                                    "records": [
+                                        {
+                                            "display_name": "Allowed Creator",
+                                            "primary_niche": "skincare",
+                                            "topics": ["skincare"],
+                                            "accounts": [
+                                                {
+                                                    "platform": "website",
+                                                    "handle": "allowed",
+                                                    "profile_url": "https://creator.example/media-kit",
+                                                }
+                                            ],
+                                            "sources": [
+                                                {
+                                                    "source_url": "https://creator.example/media-kit",
+                                                    "source_type": "tinyfish_search",
+                                                    "confidence": 0.65,
+                                                    "fields_found": {"query": query},
+                                                },
+                                                {
+                                                    "source_url": "https://instagram.com/restricted",
+                                                    "source_type": "tinyfish_search",
+                                                    "confidence": 0.65,
+                                                    "fields_found": {},
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                    "source_url": None,
+                                },
+                            )()
+
+                    jobs.adapter_for_provider = lambda provider: FakeAdapter()
+                    try:
+                        output = run_job(store, job_id)
+                    finally:
+                        jobs.adapter_for_provider = original
+
+                    self.assertEqual(len(output["enrichment_job_ids"]), 1)
+                    refresh = store.get_discovery_job(output["enrichment_job_ids"][0])
+                    self.assertEqual(refresh["job_type"], "creator_refresh")
+                    self.assertEqual(refresh["provider"], "tinyfish")
+                    self.assertEqual(refresh["input"]["profile_url"], "https://creator.example/media-kit")
+                    self.assertEqual(refresh["input"]["campaign_id"], to_uuid("camp_test"))
+                finally:
+                    store.close()
+        finally:
+            if original_key is not None:
+                os.environ["TINYFISH_API_KEY"] = original_key
+            else:
+                os.environ.pop("TINYFISH_API_KEY", None)
 
 
 if __name__ == "__main__":

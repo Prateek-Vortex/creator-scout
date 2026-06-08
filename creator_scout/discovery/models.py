@@ -57,6 +57,8 @@ class CreatorContact:
     permission_basis: PermissionBasis
     confidence: float
     do_not_contact: bool = False
+    suppressed_at: str | None = None
+    suppression_reason: str | None = None
     last_verified_at: str = field(default_factory=utc_now)
 
 
@@ -141,4 +143,3 @@ def to_jsonable(value: Any) -> Any:
     if isinstance(value, list):
         return [to_jsonable(item) for item in value]
     return value
-

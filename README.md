@@ -129,6 +129,7 @@ Required runtime env:
 - `YOUTUBE_API_KEY` for YouTube query discovery
 - `TINYFISH_API_KEY` when using TinyFish discovery
 - `FIRECRAWL_API_KEY` when using explicit Firecrawl URL refresh
+- `AUTOSEND_API_KEY`, `AUTOSEND_FROM_EMAIL`, and `AUTOSEND_UNSUBSCRIBE_GROUP_ID` for explicit outreach sends
 
 Deploy one worker instance initially to avoid distributed queue-locking complexity.
 

@@ -25,6 +25,10 @@ IN_TEST = "unittest" in sys.modules or "pytest" in sys.modules or (len(sys.argv)
 UUID_TO_ORIGINAL = {}
 _PUBLIC_INSFORGE_FALLBACK_WARNED = False
 _RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
+_NON_UUID_ID_FIELDS = {
+    "provider_message_id",
+    "unsubscribe_group_id",
+}
 
 
 def to_uuid(val: Any) -> str | None:
@@ -45,7 +49,9 @@ def _normalize_uuids(data: Any) -> Any:
         new_dict = {}
         for k, v in data.items():
             if k == "id" or k.endswith("_id"):
-                if v is not None:
+                if k in _NON_UUID_ID_FIELDS:
+                    new_dict[k] = v
+                elif v is not None:
                     new_dict[k] = to_uuid(v)
                 else:
                     new_dict[k] = None
@@ -67,6 +73,9 @@ def _normalize_path(path: str) -> str:
         if "=" in part:
             k, v = part.split("=", 1)
             if k == "id" or k.endswith("_id"):
+                if k in _NON_UUID_ID_FIELDS:
+                    new_parts.append(part)
+                    continue
                 if v.startswith("eq."):
                     val = v[3:]
                     new_parts.append(f"{k}=eq.{to_uuid(val)}")
@@ -574,6 +583,8 @@ class DiscoveryStore:
                     permission_basis=PermissionBasis(contact["permission_basis"]),
                     confidence=float(contact["confidence"]) if contact["confidence"] else 0.75,
                     do_not_contact=bool(contact["do_not_contact"]),
+                    suppressed_at=contact.get("suppressed_at"),
+                    suppression_reason=contact.get("suppression_reason"),
                     last_verified_at=contact["last_verified_at"],
                 )
                 for contact in contacts
@@ -986,6 +997,133 @@ class DiscoveryStore:
             f"/api/database/records/campaign_creators?campaign_id=eq.{campaign_id}&creator_id=eq.{creator_id}&limit=1",
         )
         return rows[0] if rows else None
+
+    def list_outreach_messages(self, campaign_creator_id: str, limit: int = 20) -> list[dict]:
+        return self._request(
+            "GET",
+            (
+                "/api/database/records/outreach_messages"
+                f"?campaign_creator_id=eq.{campaign_creator_id}&order=created_at.desc&limit={limit}"
+            ),
+        )
+
+    def create_outreach_message(
+        self,
+        *,
+        campaign_creator_id: str,
+        recipient_contact_id: str | None,
+        recipient_email: str,
+        subject: str,
+        body: str,
+        provider: str,
+        provider_message_id: str | None,
+        provider_response: dict | None,
+        status: str,
+        error: str | None = None,
+        unsubscribe_group_id: str | None = None,
+        sent_at: str | None = None,
+    ) -> dict:
+        now = utc_now()
+        message_id = stable_id("om", campaign_creator_id, provider, recipient_email, subject, now)
+        message_data = {
+            "id": message_id,
+            "campaign_creator_id": campaign_creator_id,
+            "recipient_contact_id": recipient_contact_id,
+            "recipient_email": recipient_email,
+            "channel": "email",
+            "subject": subject,
+            "body": body,
+            "tone": "warm",
+            "status": status,
+            "sequence_order": 1,
+            "provider": provider,
+            "provider_message_id": provider_message_id,
+            "provider_response": provider_response or {},
+            "error": error,
+            "unsubscribe_group_id": unsubscribe_group_id,
+            "sent_at": sent_at,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._request(
+            "POST",
+            "/api/database/records/outreach_messages",
+            json_data=[message_data],
+            headers={"Prefer": "resolution=merge-duplicates"},
+        )
+        return self.get_outreach_message(message_id) or message_data
+
+    def get_outreach_message(self, message_id: str) -> dict | None:
+        rows = self._request("GET", f"/api/database/records/outreach_messages?id=eq.{message_id}&limit=1")
+        return rows[0] if rows else None
+
+    def get_outreach_message_by_provider_id(self, provider: str, provider_message_id: str) -> dict | None:
+        rows = self._request(
+            "GET",
+            (
+                "/api/database/records/outreach_messages"
+                f"?provider=eq.{provider}&provider_message_id=eq.{quote(provider_message_id, safe='')}&limit=1"
+            ),
+        )
+        return rows[0] if rows else None
+
+    def update_outreach_message(self, message_id: str, fields: dict) -> dict | None:
+        allowed = {
+            "status",
+            "provider_message_id",
+            "provider_response",
+            "error",
+            "sent_at",
+            "delivered_at",
+            "opened_at",
+            "replied_at",
+            "bounced_at",
+            "spam_reported_at",
+            "unsubscribed_at",
+        }
+        patch = {key: value for key, value in fields.items() if key in allowed}
+        if not patch:
+            return self.get_outreach_message(message_id)
+        patch["updated_at"] = utc_now()
+        self._request(
+            "PATCH",
+            f"/api/database/records/outreach_messages?id=eq.{message_id}",
+            json_data=patch,
+        )
+        return self.get_outreach_message(message_id)
+
+    def list_creator_contact_rows(self, creator_id: str) -> list[dict]:
+        return self._request(
+            "GET",
+            f"/api/database/records/creator_contacts?creator_id=eq.{creator_id}",
+        )
+
+    def suppress_creator_contact(
+        self,
+        *,
+        contact_id: str | None = None,
+        email: str | None = None,
+        reason: str,
+    ) -> int:
+        if not contact_id and not email:
+            return 0
+        now = utc_now()
+        path = (
+            f"/api/database/records/creator_contacts?id=eq.{contact_id}"
+            if contact_id
+            else f"/api/database/records/creator_contacts?contact_type=eq.email&value=eq.{quote(email or '', safe='')}"
+        )
+        self._request(
+            "PATCH",
+            path,
+            json_data={
+                "do_not_contact": True,
+                "suppressed_at": now,
+                "suppression_reason": reason,
+                "last_verified_at": now,
+            },
+        )
+        return 1
 
     def create_campaign_export(
         self,

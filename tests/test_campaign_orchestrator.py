@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -79,10 +80,15 @@ def fake_brand_scan_service(store: DiscoveryStore) -> BrandScanService:
 class CampaignOrchestratorTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
+        self.original_tinyfish_key = os.environ.pop("TINYFISH_API_KEY", None)
         self.store = DiscoveryStore(Path(self.tmp.name) / "campaign-store-arg-ignored")
         ingest_records(self.store, json.loads(SEED_PATH.read_text(encoding="utf-8")))
 
     def tearDown(self) -> None:
+        if self.original_tinyfish_key is not None:
+            os.environ["TINYFISH_API_KEY"] = self.original_tinyfish_key
+        else:
+            os.environ.pop("TINYFISH_API_KEY", None)
         self.store.close()
         self.tmp.cleanup()
 
@@ -108,6 +114,30 @@ class CampaignOrchestratorTestCase(unittest.TestCase):
             job = self.store.get_discovery_job(job_id)
             self.assertEqual(job["input"]["campaign_id"], campaign["id"])
             self.assertEqual(job["input"]["limit"], 3)
+
+    def test_campaign_creation_safe_fanout_queues_youtube_and_tinyfish_when_configured(self) -> None:
+        os.environ["TINYFISH_API_KEY"] = "fake-tinyfish"
+        service = CampaignService(self.store, brand_scan_service=fake_brand_scan_service(self.store))
+        result = service.create_campaign(
+            "https://glow.example",
+            org_id="org_campaign",
+            geo="India",
+            goal="ugc",
+            provider="youtube",
+            query_limit=2,
+            per_query_limit=3,
+            discovery_mode="safe_fanout",
+            max_enrichment_urls_per_query=4,
+        )
+
+        campaign = result["campaign"]
+        providers = [job["provider"] for job in campaign["jobs"]]
+        self.assertEqual(len(result["discovery_job_ids"]), 4)
+        self.assertEqual(providers.count("youtube"), 2)
+        self.assertEqual(providers.count("tinyfish"), 2)
+        tinyfish_job_id = next(job["job_id"] for job in campaign["jobs"] if job["provider"] == "tinyfish")
+        tinyfish_job = self.store.get_discovery_job(tinyfish_job_id)
+        self.assertEqual(tinyfish_job["input"]["max_enrichment_urls"], 4)
 
     def test_campaign_shortlist_ranks_existing_index_matches(self) -> None:
         service = CampaignService(self.store, brand_scan_service=fake_brand_scan_service(self.store))

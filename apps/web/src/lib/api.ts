@@ -115,6 +115,8 @@ export interface CreatorContact {
   permission_basis: string;
   confidence: number;
   do_not_contact: boolean;
+  suppressed_at?: string | null;
+  suppression_reason?: string | null;
   last_verified_at: string;
 }
 
@@ -161,9 +163,44 @@ export interface CampaignCreator {
   recommended_pitch: string;
   notes: string | null;
   outreach_draft: { subject?: string; body?: string } | null;
+  outreach_messages?: OutreachMessage[];
   created_at: string;
   updated_at: string;
   creator: CreatorProfile | null;
+}
+
+export interface OutreachMessage {
+  id: string;
+  campaign_creator_id: string;
+  recipient_contact_id: string | null;
+  recipient_email: string | null;
+  channel: string;
+  subject: string | null;
+  body: string;
+  status: string;
+  provider: string | null;
+  provider_message_id: string | null;
+  provider_response: Record<string, unknown>;
+  error: string | null;
+  unsubscribe_group_id: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  opened_at: string | null;
+  replied_at: string | null;
+  bounced_at: string | null;
+  spam_reported_at: string | null;
+  unsubscribed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachConfig {
+  enabled: boolean;
+  has_api_key: boolean;
+  has_from_email: boolean;
+  has_unsubscribe_group: boolean;
+  from_email: string | null;
+  from_name: string;
 }
 
 export interface CreditUsage {
@@ -233,8 +270,11 @@ export const api = {
     goal?: string;
     platforms?: string[];
     provider?: string;
+    discovery_mode?: "safe_fanout" | "single_provider";
     query_limit?: number;
     per_query_limit?: number;
+    max_providers_per_query?: number;
+    max_enrichment_urls_per_query?: number;
   }): Promise<{ data: { campaign: Campaign; discovery_job_ids: string[] } }> {
     return apiRequest("/v1/campaigns", {
       method: "POST",
@@ -288,6 +328,21 @@ export const api = {
     return apiRequest(`/v1/campaigns/${campaignId}/export`, {
       method: "POST",
       body: JSON.stringify({}),
+    });
+  },
+
+  async getOutreachConfig(): Promise<{ data: OutreachConfig }> {
+    return apiRequest("/v1/outreach/config");
+  },
+
+  async sendOutreach(
+    campaignId: string,
+    creatorId: string,
+    params: { subject?: string; body?: string }
+  ): Promise<{ data: { outreach_message: OutreachMessage; campaign_creator: CampaignCreator } }> {
+    return apiRequest(`/v1/campaigns/${campaignId}/creators/${creatorId}/outreach/send`, {
+      method: "POST",
+      body: JSON.stringify(params),
     });
   },
 };

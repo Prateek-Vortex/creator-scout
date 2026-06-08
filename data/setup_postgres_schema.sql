@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS creator_contacts (
   permission_basis text NOT null DEFAULT 'public_business_contact',
   confidence text NOT null DEFAULT 'medium',
   do_not_contact boolean NOT null DEFAULT false,
+  suppressed_at timestamp with time zone,
+  suppression_reason text,
   last_verified_at timestamp with time zone NOT null DEFAULT now(),
   created_at timestamp with time zone NOT null DEFAULT now(),
   UNIQUE(creator_id, contact_type, value)
@@ -165,15 +167,27 @@ CREATE TABLE IF NOT EXISTS campaign_exports (
 CREATE TABLE IF NOT EXISTS outreach_messages (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   campaign_creator_id uuid REFERENCES campaign_creators(id) ON DELETE CASCADE,
+  recipient_contact_id uuid REFERENCES creator_contacts(id) ON DELETE SET NULL,
+  recipient_email text,
   channel text NOT null DEFAULT 'email',
   subject text,
   body text NOT null,
   tone text DEFAULT 'warm',
   status text NOT null DEFAULT 'draft',
   sequence_order integer DEFAULT 1,
+  provider text,
+  provider_message_id text,
+  provider_response jsonb NOT null DEFAULT '{}'::jsonb,
+  error text,
+  unsubscribe_group_id text,
   sent_at timestamp with time zone,
+  delivered_at timestamp with time zone,
   opened_at timestamp with time zone,
   replied_at timestamp with time zone,
+  bounced_at timestamp with time zone,
+  spam_reported_at timestamp with time zone,
+  unsubscribed_at timestamp with time zone,
+  updated_at timestamp with time zone NOT null DEFAULT now(),
   created_at timestamp with time zone NOT null DEFAULT now()
 );
 

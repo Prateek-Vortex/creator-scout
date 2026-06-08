@@ -10,6 +10,7 @@ from creator_scout.discovery.models import ApiMeta, ApiResponse, Freshness, to_j
 from creator_scout.discovery.search import DiscoverySearch, credit_cost_for_search, parse_query
 from creator_scout.discovery.store import DiscoveryStore, to_uuid
 from creator_scout.brand.service import BrandScanService
+from creator_scout.outreach.service import OutreachService
 
 
 class DiscoveryService:
@@ -17,6 +18,7 @@ class DiscoveryService:
         self.store = store
         self.search_engine = DiscoverySearch(store)
         self.campaign_service = CampaignService(store)
+        self.outreach_service = OutreachService(store, campaign_service=self.campaign_service)
 
     def search(self, payload: dict, principal: ApiKeyPrincipal | None = None) -> dict:
         started = time.perf_counter()
@@ -379,6 +381,9 @@ class DiscoveryService:
             provider=str(payload.get("provider") or "youtube"),
             query_limit=int(payload.get("query_limit", 5)),
             per_query_limit=int(payload.get("per_query_limit", 10)),
+            discovery_mode=str(payload.get("discovery_mode") or "safe_fanout"),
+            max_providers_per_query=int(payload.get("max_providers_per_query", 2)),
+            max_enrichment_urls_per_query=int(payload.get("max_enrichment_urls_per_query", 5)),
         )
         latency_ms = int((time.perf_counter() - started) * 1000)
         if principal:
@@ -573,6 +578,65 @@ class DiscoveryService:
                 "freshness": "fresh",
                 "confidence": 1.0,
                 "sources": [{"source_url": export.get("file_url"), "source_type": "campaign_export"}],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
+    def outreach_config(self, principal: ApiKeyPrincipal | None = None) -> dict:
+        return {
+            "data": self.outreach_service.config_status(),
+            "meta": {
+                "request_id": f"req_{uuid4().hex}",
+                "credits_used": 0.0,
+                "freshness": "fresh",
+                "confidence": 1.0,
+                "sources": [],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
+    def send_campaign_creator_outreach(
+        self,
+        campaign_id: str,
+        creator_id: str,
+        payload: dict,
+        principal: ApiKeyPrincipal | None = None,
+    ) -> dict | None:
+        request_id = f"req_{uuid4().hex}"
+        result = self.outreach_service.send_campaign_creator_outreach(
+            campaign_id,
+            creator_id,
+            org_id=principal.org_id if principal else None,
+            subject=payload.get("subject"),
+            body=payload.get("body"),
+        )
+        if result is None:
+            return None
+        return {
+            "data": result,
+            "meta": {
+                "request_id": request_id,
+                "credits_used": 0.0,
+                "freshness": "fresh",
+                "confidence": 1.0,
+                "sources": [],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
+    def handle_autosend_webhook(self, payload: dict) -> dict:
+        result = self.outreach_service.handle_autosend_webhook(payload)
+        return {
+            "data": result,
+            "meta": {
+                "request_id": f"req_{uuid4().hex}",
+                "credits_used": 0.0,
+                "freshness": "fresh",
+                "confidence": 1.0,
+                "sources": [],
                 "missing_fields": [],
                 "next_page": None,
             },
