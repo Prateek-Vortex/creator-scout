@@ -460,6 +460,8 @@ class DiscoveryStore:
                 "permission_basis": contact.permission_basis.value,
                 "confidence": str(contact.confidence),
                 "do_not_contact": contact.do_not_contact,
+                "suppressed_at": contact.suppressed_at,
+                "suppression_reason": contact.suppression_reason,
                 "last_verified_at": contact.last_verified_at,
             })
         if contacts_data:
@@ -1339,6 +1341,46 @@ class DiscoveryStore:
             },
         )
         return self.get_discovery_job(job_id)
+
+    # ------------------------------------------------------------------
+    # Organization helpers
+    # ------------------------------------------------------------------
+
+    def get_organization(self, org_id: str) -> dict | None:
+        """Fetch a single organization row by primary key."""
+        rows = self._request(
+            "GET",
+            f"/api/database/records/organizations?id=eq.{org_id}&limit=1",
+        )
+        return rows[0] if rows else None
+
+    def get_organization_by_subscription_id(self, subscription_id: str) -> dict | None:
+        """Look up an organization by its Dodo subscription ID."""
+        rows = self._request(
+            "GET",
+            f"/api/database/records/organizations?dodo_subscription_id=eq.{subscription_id}&limit=1",
+        )
+        return rows[0] if rows else None
+
+    def update_organization(self, org_id: str, fields: dict) -> dict | None:
+        """Patch allowed billing / plan fields on an organization row."""
+        allowed = {
+            "plan",
+            "dodo_subscription_id",
+            "dodo_checkout_session_id",
+            "name",
+            "slug",
+        }
+        patch = {k: v for k, v in fields.items() if k in allowed}
+        if not patch:
+            return self.get_organization(org_id)
+        patch["updated_at"] = utc_now()
+        self._request(
+            "PATCH",
+            f"/api/database/records/organizations?id=eq.{org_id}",
+            json_data=patch,
+        )
+        return self.get_organization(org_id)
 
 
 def summarize_job_statuses(jobs: list[dict]) -> dict:

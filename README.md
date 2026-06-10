@@ -4,7 +4,7 @@ Creator Scout is an InsForge-backed creator discovery and campaign shortlisting 
 
 ## Current Architecture
 
-- Python API: `apps/api/server.py`, serving `/v1/*` on `http://127.0.0.1:8765`.
+- Python API: `apps/api/main.py`, serving `/v1/*` on `http://127.0.0.1:8765`.
 - Web app: `apps/web`, a Next.js Sticker Notebook UI.
 - Backend: InsForge Postgres, Storage, Auth, and AI gateway for project `creatorScout`.
 - Worker: `python -m creator_scout.discovery.worker --loop --interval 30`.
@@ -43,7 +43,7 @@ Do not expose `INSFORGE_API_KEY` through any `NEXT_PUBLIC_*` variable.
 Start the API:
 
 ```bash
-PYTHONPATH=. python3 -u apps/api/server.py
+PYTHONPATH=. python3 -u apps/api/main.py
 ```
 
 Start the web app:

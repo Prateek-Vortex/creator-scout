@@ -7,7 +7,7 @@ This document is the canonical current-state reference for the repo. When older 
 ## Source Of Truth
 
 - Current UI direction: `DESIGN_SYSTEM.md`, `.gemini/ui-skills.md`, `apps/web/src/app/globals.css`, and `apps/web/src/app/page.tsx`.
-- Current API/runtime code: `apps/api/server.py` and `creator_scout/`.
+- Current API/runtime code: `apps/api/main.py` and `creator_scout/`.
 - Current data model: `data/setup_postgres_schema.sql` plus migration files under `migrations/`.
 - Live backend audit: `docs/insforge_live_audit_2026-06-07.md`.
 - Branch backend verification: `docs/insforge_branch_verification_2026-06-07.md`.
@@ -29,7 +29,7 @@ The UI theme is the warm cream Sticker Notebook system: paper surfaces, sticker 
 
 ### Python API
 
-`apps/api/server.py` is a lightweight `http.server` service bound by default to `127.0.0.1:8765`.
+`apps/api/main.py` is a FastAPI service bound by default to `127.0.0.1:8765`.
 
 Implemented routes include:
 

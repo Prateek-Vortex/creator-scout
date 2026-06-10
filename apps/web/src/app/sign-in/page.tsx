@@ -12,6 +12,9 @@ export default function SignInPage() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [showOtpInput, setShowOtpInput] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -27,9 +30,41 @@ export default function SignInPage() {
         router.push("/");
       }, 1000);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Sign in failed.");
+      const errMsg = error instanceof Error ? error.message : "Sign in failed.";
+      setMessage(errMsg);
+      if (errMsg.toLowerCase().includes("verification") || errMsg.toLowerCase().includes("verify")) {
+        setShowOtpInput(true);
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleVerifyOtp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsVerifying(true);
+    setMessage("");
+
+    try {
+      const insforge = getInsForgeClient();
+      const { error } = await insforge.auth.verifyEmail({ email, otp });
+      if (error) throw error;
+      setMessage("Email verified successfully! Signing in...");
+      // Auto sign in using password
+      try {
+        const { error: signinError } = await insforge.auth.signInWithPassword({ email, password });
+        if (signinError) throw signinError;
+        setTimeout(() => {
+          router.push("/");
+        }, 1000);
+      } catch {
+        setMessage("Email verified! Please click 'Continue' to log in.");
+        setShowOtpInput(false);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Verification failed.");
+    } finally {
+      setIsVerifying(false);
     }
   }
 
@@ -71,37 +106,72 @@ export default function SignInPage() {
             </div>
           )}
 
-          <form className="grid gap-4" onSubmit={handleSubmit}>
-            <AuthField label="Email address">
-              <input
-                className="glass-input focus-ring w-full px-3 py-2 text-sm font-mono"
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="you@company.com"
-                required
-                type="email"
-                value={email}
-              />
-            </AuthField>
+          {showOtpInput ? (
+            <form className="grid gap-4" onSubmit={handleVerifyOtp}>
+              <div className="text-xs text-muted leading-relaxed mb-2 font-mono">
+                Please enter the 6-digit verification code sent to <strong>{email}</strong>.
+              </div>
+              <AuthField label="Verification Code">
+                <input
+                  className="glass-input focus-ring w-full px-3 py-2 text-sm font-mono text-center tracking-widest text-lg"
+                  maxLength={6}
+                  onChange={(event) => setOtp(event.target.value)}
+                  placeholder="123456"
+                  required
+                  type="text"
+                  value={otp}
+                />
+              </AuthField>
 
-            <AuthField label="Password">
-              <input
-                className="glass-input focus-ring w-full px-3 py-2 text-sm font-mono"
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="••••••••"
-                required
-                type="password"
-                value={password}
-              />
-            </AuthField>
+              <button
+                className="glow-btn focus-ring w-full rounded py-2.5 text-sm font-medium text-black mt-2 cursor-pointer disabled:opacity-50"
+                disabled={isVerifying}
+                type="submit"
+              >
+                {isVerifying ? "Verifying..." : "Verify Code"}
+              </button>
 
-            <button
-              className="glow-btn focus-ring w-full rounded py-2.5 text-sm font-medium text-black mt-2 cursor-pointer disabled:opacity-50"
-              disabled={!hasInsForgeConfig || isSubmitting}
-              type="submit"
-            >
-              {isSubmitting ? "Authenticating..." : "Continue"}
-            </button>
-          </form>
+              <button
+                className="text-[10px] text-[#7a7a7a] hover:text-white transition-colors underline font-mono text-center mt-2 cursor-pointer"
+                onClick={() => setShowOtpInput(false)}
+                type="button"
+              >
+                Back to log in
+              </button>
+            </form>
+          ) : (
+            <form className="grid gap-4" onSubmit={handleSubmit}>
+              <AuthField label="Email address">
+                <input
+                  className="glass-input focus-ring w-full px-3 py-2 text-sm font-mono"
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@company.com"
+                  required
+                  type="email"
+                  value={email}
+                />
+              </AuthField>
+
+              <AuthField label="Password">
+                <input
+                  className="glass-input focus-ring w-full px-3 py-2 text-sm font-mono"
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="••••••••"
+                  required
+                  type="password"
+                  value={password}
+                />
+              </AuthField>
+
+              <button
+                className="glow-btn focus-ring w-full rounded py-2.5 text-sm font-medium text-black mt-2 cursor-pointer disabled:opacity-50"
+                disabled={!hasInsForgeConfig || isSubmitting}
+                type="submit"
+              >
+                {isSubmitting ? "Authenticating..." : "Continue"}
+              </button>
+            </form>
+          )}
 
           {/* Divider */}
           <div className="flex items-center gap-3 my-6">

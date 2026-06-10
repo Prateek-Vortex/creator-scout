@@ -11,6 +11,7 @@ from creator_scout.discovery.search import DiscoverySearch, credit_cost_for_sear
 from creator_scout.discovery.store import DiscoveryStore, to_uuid
 from creator_scout.brand.service import BrandScanService
 from creator_scout.outreach.service import OutreachService
+from creator_scout.billing.service import BillingService
 
 
 class DiscoveryService:
@@ -19,6 +20,7 @@ class DiscoveryService:
         self.search_engine = DiscoverySearch(store)
         self.campaign_service = CampaignService(store)
         self.outreach_service = OutreachService(store, campaign_service=self.campaign_service)
+        self.billing_service = BillingService(store)
 
     def search(self, payload: dict, principal: ApiKeyPrincipal | None = None) -> dict:
         started = time.perf_counter()
@@ -641,6 +643,41 @@ class DiscoveryService:
                 "next_page": None,
             },
         }
+
+    # ------------------------------------------------------------------
+    # Billing
+    # ------------------------------------------------------------------
+
+    def create_billing_checkout(self, payload: dict, principal: ApiKeyPrincipal | None) -> dict:
+        """Create a Dodo Payments hosted checkout session.
+
+        Expected payload keys:
+          plan        — one of: starter, growth, agency
+          name        — customer display name
+          email       — customer email address
+          return_url  — where to redirect after payment
+        """
+        if principal is None:
+            raise PermissionError("Authentication required for billing")
+        plan = payload.get("plan", "starter")
+        name = payload.get("name") or "Creator Scout User"
+        email = payload.get("email") or ""
+        return_url = payload.get("return_url") or "https://creatorscount.ai/"
+        return self.billing_service.create_checkout_session(
+            org_id=principal.org_id,
+            plan=plan,
+            name=name,
+            email=email,
+            return_url=return_url,
+        )
+
+    def handle_billing_webhook(
+        self,
+        payload_bytes: bytes,
+        headers: dict[str, str],
+    ) -> dict:
+        """Verify and process an inbound Dodo Payments webhook."""
+        return self.billing_service.handle_webhook(payload_bytes, headers)
 
 
 def _average_shortlist_confidence(shortlist: list[dict]) -> float:

@@ -93,14 +93,31 @@ def creator_from_record(record: dict[str, Any]) -> CreatorProfile:
 
     contacts: list[CreatorContact] = []
     for item in record.get("contacts", []):
+        contact_type = item.get("contact_type", "email")
+        value = item["value"].lower().strip()
+        do_not_contact = bool(item.get("do_not_contact", False))
+        suppressed_at = item.get("suppressed_at")
+        suppression_reason = item.get("suppression_reason")
+        confidence = float(item.get("confidence", 0.75))
+
+        if contact_type == "email":
+            from creator_scout.discovery.verifier import verify_email_format_and_domain
+            if not verify_email_format_and_domain(value):
+                do_not_contact = True
+                confidence = 0.1
+                suppressed_at = utc_now()
+                suppression_reason = "failed_verification"
+
         contacts.append(
             CreatorContact(
-                contact_type=item.get("contact_type", "email"),
-                value=item["value"].lower(),
+                contact_type=contact_type,
+                value=value,
                 source_url=item["source_url"],
                 permission_basis=PermissionBasis(item.get("permission_basis", "public_business_contact")),
-                confidence=float(item.get("confidence", 0.75)),
-                do_not_contact=bool(item.get("do_not_contact", False)),
+                confidence=confidence,
+                do_not_contact=do_not_contact,
+                suppressed_at=suppressed_at,
+                suppression_reason=suppression_reason,
                 last_verified_at=item.get("last_verified_at") or utc_now(),
             )
         )
@@ -114,14 +131,26 @@ def creator_from_record(record: dict[str, Any]) -> CreatorProfile:
         ]
     )
     for email in extract_public_emails(public_text):
+        email_val = email.lower().strip()
+        from creator_scout.discovery.verifier import verify_email_format_and_domain
+        is_valid = verify_email_format_and_domain(email_val)
+        
+        do_not_contact = not is_valid
+        confidence = 0.6 if is_valid else 0.1
+        suppressed_at = utc_now() if not is_valid else None
+        suppression_reason = "failed_verification" if not is_valid else None
+
         source_url = sources[0].source_url if sources else (accounts[0].profile_url if accounts else "")
         contacts.append(
             CreatorContact(
                 contact_type="email",
-                value=email,
+                value=email_val,
                 source_url=source_url,
                 permission_basis=PermissionBasis.PUBLIC_BUSINESS_CONTACT,
-                confidence=0.6,
+                confidence=confidence,
+                do_not_contact=do_not_contact,
+                suppressed_at=suppressed_at,
+                suppression_reason=suppression_reason,
             )
         )
 

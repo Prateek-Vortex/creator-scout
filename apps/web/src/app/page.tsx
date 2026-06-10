@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { motion, useScroll, useTransform, useSpring } from "framer-motion";
@@ -46,7 +47,7 @@ const CRAWLER_LOGS = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ApiHealth = "checking" | "online" | "offline";
-type ActiveTab = "brief" | "strategy" | "shortlist" | "outreach" | "crm" | "export";
+type ActiveTab = "brief" | "strategy" | "shortlist" | "outreach" | "crm" | "export" | "billing";
 type AuthUser = {
   email?: string | null;
   profile?: {
@@ -292,9 +293,15 @@ function Navbar({
               <span className="text-xs text-[#7a7a7a]">
                 Hi, <span className="font-semibold text-ink">{user.profile?.name || user.email}</span>
               </span>
+              <Link
+                href="/settings"
+                className="px-3 py-1.5 rounded-lg border border-[#e8e4df] text-xs font-semibold text-ink bg-white hover:bg-[#f3f0eb] transition cursor-pointer"
+              >
+                Settings
+              </Link>
               <button
                 onClick={onSignOut}
-                className="px-3 py-1.5 rounded-lg border border-[#e8e4df] text-xs font-semibold text-ink bg-white hover:bg-[#f3f0eb] transition cursor-pointer"
+                className="px-3 py-1.5 rounded-lg border border-[#e8e4df] text-xs font-semibold text-ink bg-[#f5f2ed] hover:bg-[#e8e4df] transition cursor-pointer"
               >
                 Log out
               </button>
@@ -313,6 +320,7 @@ function Navbar({
             </>
           )}
         </div>
+
       </div>
     </nav>
   );
@@ -330,6 +338,11 @@ function LandingPage({
   const formRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
 
+  const [goal, setGoal] = useState("ugc");
+  const [geoCountry, setGeoCountry] = useState("India");
+  const [geoCustom, setGeoCustom] = useState("");
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["youtube", "instagram", "tiktok"]);
+
   // Scroll-linked hero effect
   const { scrollYProgress } = useScroll({
     target: heroRef,
@@ -345,9 +358,25 @@ function LandingPage({
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  function handleHeroSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    onLaunch({ brand_url: brandUrl, goal: "ugc", geo: "India", platforms: PLATFORM_OPTIONS });
+    onLaunch({ brand_url: brandUrl, goal: "ugc", geo: "India", platforms: ["youtube", "instagram", "tiktok"] });
+  }
+
+  function handleDetailedSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const finalGeo = geoCountry === "Custom"
+      ? geoCustom.trim()
+      : geoCustom.trim()
+        ? `${geoCountry} (${geoCustom.trim()})`
+        : geoCountry;
+    
+    onLaunch({
+      brand_url: brandUrl,
+      goal,
+      geo: finalGeo || "India",
+      platforms: selectedPlatforms.length ? selectedPlatforms : ["youtube"],
+    });
   }
 
   function fillDemo() {
@@ -460,7 +489,7 @@ function LandingPage({
           {/* ── Inline URL form ── */}
           <motion.form
             className="max-w-xl mx-auto"
-            onSubmit={handleSubmit}
+            onSubmit={handleHeroSubmit}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5, duration: 0.6 }}
@@ -596,7 +625,7 @@ function LandingPage({
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
           >
-            <form className="grid gap-5" onSubmit={handleSubmit}>
+            <form className="grid gap-5" onSubmit={handleDetailedSubmit}>
               <Field label="Your brand website">
                 <input
                   id="form-url-input"
@@ -607,6 +636,75 @@ function LandingPage({
                   type="url"
                   value={brandUrl}
                 />
+              </Field>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Target Country">
+                  <select
+                    value={geoCountry}
+                    onChange={(e) => setGeoCountry(e.target.value)}
+                    className="glass-input focus-ring w-full px-4 py-3.5 text-sm bg-white cursor-pointer"
+                  >
+                    <option value="India">India</option>
+                    <option value="United States">United States</option>
+                    <option value="United Kingdom">United Kingdom</option>
+                    <option value="Germany">Germany</option>
+                    <option value="France">France</option>
+                    <option value="Australia">Australia</option>
+                    <option value="Custom">Custom Region/City/Language...</option>
+                  </select>
+                </Field>
+
+                <Field label={geoCountry === "Custom" ? "Target Details (Required)" : "City / Language / Region (Optional)"}>
+                  <input
+                    type="text"
+                    value={geoCustom}
+                    onChange={(e) => setGeoCustom(e.target.value)}
+                    placeholder={geoCountry === "Custom" ? "e.g. US (Spanish), Berlin" : "e.g. Mumbai, English speakers"}
+                    required={geoCountry === "Custom"}
+                    className="glass-input focus-ring w-full px-4 py-3.5 text-sm font-mono"
+                  />
+                </Field>
+              </div>
+
+              <Field label="Campaign Goal">
+                <select
+                  value={goal}
+                  onChange={(e) => setGoal(e.target.value)}
+                  className="glass-input focus-ring w-full px-4 py-3.5 text-sm bg-white cursor-pointer"
+                >
+                  <option value="ugc">UGC (User Generated Content)</option>
+                  <option value="awareness">Brand Awareness</option>
+                  <option value="conversion">Conversions & Sales</option>
+                  <option value="affiliate">Affiliate Partnership</option>
+                </select>
+              </Field>
+
+              <Field label="Target Platforms">
+                <div className="flex flex-wrap gap-3 mt-1.5">
+                  {PLATFORM_OPTIONS.map((p) => {
+                    const isSelected = selectedPlatforms.includes(p);
+                    const activeColor = p === "youtube" ? "badge-coral" : p === "instagram" ? "badge-lavender" : "badge-teal";
+                    return (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPlatforms((prev) =>
+                            prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+                          );
+                        }}
+                        className={`px-4 py-2 rounded-lg border text-xs font-semibold capitalize cursor-pointer transition-all ${
+                          isSelected
+                            ? `badge-sticker ${activeColor} border-transparent shadow-sm`
+                            : "border-[#e8e4df] bg-white text-[#7a7a7a] hover:border-[#d4cfc8]"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+                </div>
               </Field>
 
               <button
@@ -664,6 +762,7 @@ function Workspace({
   creators,
   onReset,
   onFindCreators,
+  onRefreshCreators,
   onStatusChange,
   onPitchChange,
   onPitchSave,
@@ -682,6 +781,7 @@ function Workspace({
   creators: CampaignCreator[];
   onReset: () => void;
   onFindCreators: () => void;
+  onRefreshCreators: () => void;
   onStatusChange: (id: string, status: string) => void;
   onPitchChange: (id: string, pitch: string) => void;
   onPitchSave: (id: string, pitch: string) => void;
@@ -702,6 +802,196 @@ function Workspace({
   const jobSummary = jobSummaryFor(campaign);
   const hasPendingJobs = jobSummary.pending > 0;
 
+  // ── Agentic Mode state ────────────────────────────────────────────────────
+  const [agentThreadId, setAgentThreadId] = useState<string | null>(null);
+  const [agentStatus, setAgentStatus] = useState<{
+    paused: boolean;
+    next_node: string | null;
+    shortlist: any[];
+    outreach_drafts: any[];
+    brand_brief: Record<string, any> | null;
+    error: string | null;
+  } | null>(null);
+  const [agentTokens, setAgentTokens] = useState<string[]>([]);
+  const [isAgentRunning, setIsAgentRunning] = useState(false);
+
+  // Load thread ID for this campaign on mount/change
+  useEffect(() => {
+    if (typeof window === "undefined" || !campaign?.id) return;
+    const stored = localStorage.getItem(`cs_agent_thread_${campaign.id}`);
+    if (stored) {
+      setAgentThreadId(stored);
+      setIsAgentRunning(true);
+      api.getGraphStatus(stored)
+        .then((status) => {
+          setAgentStatus({
+            paused: status.paused,
+            next_node: status.next_node,
+            brand_brief: status.brand_brief || null,
+            shortlist: status.shortlist || [],
+            outreach_drafts: status.outreach_drafts || [],
+            error: status.error || null,
+          });
+          if (status.shortlist && status.shortlist.length > 0) {
+            onRefreshCreators();
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to restore agent status:", err);
+          localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
+          setAgentThreadId(null);
+        })
+        .finally(() => {
+          setIsAgentRunning(false);
+        });
+    } else {
+      setAgentThreadId(null);
+      setAgentStatus(null);
+    }
+  }, [campaign?.id]);
+
+  // Wire up InsForge Realtime websocket subscription
+  useEffect(() => {
+    if (!agentThreadId || !hasInsForgeConfig) return;
+    let active = true;
+    const client = getInsForgeClient();
+    
+    const setupRealtime = async () => {
+      try {
+        await client.realtime.connect();
+        if (!active) return;
+        
+        await client.realtime.subscribe(`graph_runs:${agentThreadId}`);
+        if (!active) return;
+        
+        // Listen for realtime events (SocketMessage)
+        const handleEvent = (msg: any) => {
+          if (!active) return;
+          console.log("[realtime] event received:", msg);
+          
+          if (msg.channel === `graph_runs:${agentThreadId}`) {
+            if (msg.event === "graph.paused") {
+              setAgentStatus({
+                paused: true,
+                next_node: msg.payload.next_node,
+                brand_brief: msg.payload.brand_brief || null,
+                shortlist: msg.payload.shortlist || [],
+                outreach_drafts: msg.payload.outreach_drafts || [],
+                error: msg.payload.error || null,
+              });
+              setIsAgentRunning(false);
+              onRefreshCreators();
+            } else if (msg.event === "graph.completed") {
+              setAgentStatus({
+                paused: false,
+                next_node: null,
+                brand_brief: null,
+                shortlist: msg.payload.shortlist || [],
+                outreach_drafts: msg.payload.outreach_drafts || [],
+                error: msg.payload.error || null,
+              });
+              setIsAgentRunning(false);
+              localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
+              setAgentThreadId(null);
+              onRefreshCreators();
+            }
+          }
+        };
+        
+        client.realtime.on("graph.paused", handleEvent);
+        client.realtime.on("graph.completed", handleEvent);
+        
+        return () => {
+          active = false;
+          client.realtime.off("graph.paused", handleEvent);
+          client.realtime.off("graph.completed", handleEvent);
+          client.realtime.unsubscribe(`graph_runs:${agentThreadId}`);
+        };
+      } catch (err) {
+        console.error("[realtime] setup error:", err);
+      }
+    };
+    
+    const cleanupPromise = setupRealtime();
+    
+    return () => {
+      active = false;
+      cleanupPromise.then((cleanup) => {
+        if (cleanup) cleanup();
+      });
+    };
+  }, [agentThreadId, campaign?.id]);
+
+  async function startAgentRun() {
+    if (!campaign?.id || !campaign?.brand_url) return;
+    setIsAgentRunning(true);
+    setAgentTokens([]);
+    setAgentStatus(null);
+    setAgentThreadId(null);
+    try {
+      const es = new EventSource(
+        `/api/v1/graph/run/stream?campaign_id=${encodeURIComponent(campaign.id)}&brand_url=${encodeURIComponent(campaign.brand_url)}&goal=${encodeURIComponent(campaign.goal || "ugc")}`
+      );
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.event === "start") {
+            setAgentThreadId(data.thread_id);
+            localStorage.setItem(`cs_agent_thread_${campaign.id}`, data.thread_id);
+          }
+          if (data.event === "token") setAgentTokens((t) => [...t, data.text]);
+          if (data.event === "paused") {
+            setAgentStatus({ paused: true, next_node: data.next_node, brand_brief: data.brand_brief, shortlist: [], outreach_drafts: [], error: null });
+            setAgentThreadId(data.thread_id);
+            localStorage.setItem(`cs_agent_thread_${campaign.id}`, data.thread_id);
+            es.close();
+            setIsAgentRunning(false);
+          }
+          if (data.event === "error") {
+            setAgentStatus({ paused: false, next_node: null, brand_brief: null, shortlist: [], outreach_drafts: [], error: data.message });
+            es.close();
+            setIsAgentRunning(false);
+          }
+        } catch {}
+      };
+      es.onerror = () => { es.close(); setIsAgentRunning(false); };
+    } catch (err) {
+      setIsAgentRunning(false);
+      setAgentStatus((s) => (s ? { ...s, error: err instanceof Error ? err.message : "Agent error" } : { paused: false, next_node: null, brand_brief: null, shortlist: [], outreach_drafts: [], error: err instanceof Error ? err.message : "Agent error" }));
+    }
+  }
+
+  async function resumeAgent(approved: boolean) {
+    if (!agentThreadId) return;
+    setIsAgentRunning(true);
+    try {
+      if (!approved) {
+        localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
+        setAgentThreadId(null);
+        setAgentStatus(null);
+      }
+      const result = await api.resumeGraphRun(agentThreadId, { approved });
+      if (approved) {
+        const rs = result.run_status as any;
+        if (rs) {
+          setAgentStatus(rs);
+          if (rs.shortlist && rs.shortlist.length > 0) {
+            onRefreshCreators();
+          }
+          if (!rs.paused) {
+            localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
+            setAgentThreadId(null);
+          }
+        }
+      }
+    } catch (err) {
+      setAgentStatus((s) => (s ? { ...s, error: err instanceof Error ? err.message : "Resume error" } : null));
+    } finally {
+      setIsAgentRunning(false);
+    }
+  }
+
+
   const activeCreator = useMemo(
     () => creators.find((c) => c.creator_id === selectedId) ?? creators[0] ?? null,
     [creators, selectedId]
@@ -717,6 +1007,7 @@ function Workspace({
     { id: "outreach",  label: "Outreach",          icon: <Icon.outreach /> },
     { id: "crm",       label: "Pipeline",          icon: <Icon.crm /> },
     { id: "export",    label: "Export",            icon: <Icon.export /> },
+    { id: "billing",   label: "Plans & Billing",   icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg> },
   ] as const;
 
   const [finderLogIdx, setFinderLogIdx] = useState(0);
@@ -870,8 +1161,118 @@ function Workspace({
                     </div>
                   </div>
                 )}
+
+                {/* ── Agentic Mode Panel ── */}
+                <motion.div
+                  className="sticker-card p-6"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, delay: 0.15 }}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-xs font-bold text-ink flex items-center gap-2">
+                        <span className="text-accent">⬡</span> Agentic Mode
+                        <span style={{ fontFamily: "var(--font-caveat)" }} className="text-sm text-[#7a7a7a] font-normal">
+                          LangGraph multi-agent
+                        </span>
+                      </p>
+                      <p className="text-[10px] text-[#7a7a7a] mt-0.5">
+                        Brand scan → discovery → scoring → shortlist with human approval gates.
+                      </p>
+                    </div>
+                    {!agentThreadId && !isAgentRunning && (
+                      <button
+                        id="agentic-start-btn"
+                        onClick={startAgentRun}
+                        className="glow-btn-accent text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer"
+                      >
+                        ▶ Start Agent Run
+                      </button>
+                    )}
+                    {isAgentRunning && (
+                      <span className="badge-sticker badge-lavender text-[9px] animate-pulse">Running…</span>
+                    )}
+                  </div>
+
+                  {agentTokens.length > 0 && (
+                    <div className="bg-[#f8f6f2] border border-[#e8e4df] rounded-lg p-4 mb-4 font-mono text-xs text-ink whitespace-pre-wrap max-h-32 overflow-y-auto">
+                      {agentTokens.join("")}
+                    </div>
+                  )}
+
+                  {agentStatus?.paused && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.97 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="border border-accent/30 bg-accent/5 rounded-xl p-4 grid gap-3"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="badge-sticker badge-amber text-[9px]">Gate</span>
+                        <p className="text-xs font-semibold text-ink">
+                          Waiting at{" "}
+                          <span className="font-mono text-accent">
+                            {agentStatus.next_node?.replace(/_node$/, "") ?? "…"}
+                          </span>
+                        </p>
+                      </div>
+
+                      {agentStatus.next_node === "query_planner_node" && agentStatus.brand_brief && (
+                        <div className="grid grid-cols-2 gap-2 text-[10px] text-[#7a7a7a]">
+                          {(["brand_name", "primary_category", "price_positioning"] as const).map((k) => (
+                            <div key={k}>
+                              <p className="font-bold uppercase tracking-widest mb-0.5">{k.replace(/_/g, " ")}</p>
+                              <p className="text-ink font-medium">{String(agentStatus.brand_brief![k] ?? "—")}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {agentStatus.next_node === "outreach_draft_node" && (
+                        <p className="text-xs text-[#7a7a7a]">
+                          {agentStatus.shortlist.length} creators shortlisted — approve to draft outreach.
+                        </p>
+                      )}
+
+                      {agentStatus.next_node === "send_outreach_node" && (
+                        <p className="text-xs text-[#7a7a7a]">
+                          {agentStatus.outreach_drafts.length} drafts ready — approve to send emails.
+                        </p>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          id="agent-approve-btn"
+                          onClick={() => resumeAgent(true)}
+                          disabled={isAgentRunning}
+                          className="flex-1 glow-btn-accent text-white text-xs font-semibold py-2 rounded-lg cursor-pointer disabled:opacity-50"
+                        >
+                          ✓ Approve & Continue
+                        </button>
+                        <button
+                          id="agent-reject-btn"
+                          onClick={() => resumeAgent(false)}
+                          disabled={isAgentRunning}
+                          className="flex-1 text-xs font-semibold py-2 rounded-lg border border-[#e8e4df] text-[#7a7a7a] hover:text-ink hover:bg-[#f3f0eb] transition cursor-pointer disabled:opacity-50"
+                        >
+                          ✕ Reject
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {agentStatus?.error && (
+                    <p className="text-xs text-red-500 font-mono mt-2">{agentStatus.error}</p>
+                  )}
+
+                  {agentThreadId && !agentStatus?.paused && !agentStatus?.error && !isAgentRunning && (
+                    <p className="text-xs text-success font-semibold mt-2">✓ Agent run completed.</p>
+                  )}
+                </motion.div>
+
               </motion.div>
             )}
+
 
             {/* ── Tab: Strategy ── */}
             {activeTab === "strategy" && (
@@ -1297,6 +1698,143 @@ function Workspace({
               </motion.div>
             )}
 
+            {/* ── Tab: Billing & Plans ── */}
+            {activeTab === "billing" && (
+              <motion.div className="max-w-3xl mx-auto" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                <div className="mb-8">
+                  <h2 className="text-xl font-semibold text-ink tracking-tight mb-1">Plans & Billing</h2>
+                  <p className="text-sm text-[#7a7a7a]">Choose a plan that grows with your outreach.
+                    <span style={{ fontFamily: "var(--font-caveat)" }} className="text-accent text-base ml-1">no hidden fees.</span>
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                  {([
+                    {
+                      id: "free",
+                      name: "Free",
+                      price: "$0",
+                      period: "/mo",
+                      badge: "badge-teal",
+                      color: "#1e7a72",
+                      features: ["1 brand scan", "5 creator previews", "Basic scoring"],
+                      cta: "Current",
+                      ctaDisabled: true,
+                      rotate: -1.5,
+                    },
+                    {
+                      id: "starter",
+                      name: "Starter",
+                      price: "$29",
+                      period: "/mo",
+                      badge: "badge-coral",
+                      color: "#c4402d",
+                      features: ["3 campaigns/mo", "150 creator profiles", "Email outreach drafts"],
+                      cta: "Upgrade",
+                      ctaDisabled: false,
+                      rotate: 1,
+                    },
+                    {
+                      id: "growth",
+                      name: "Growth",
+                      price: "$79",
+                      period: "/mo",
+                      badge: "badge-lavender",
+                      color: "#6b4ec0",
+                      features: ["15 campaigns/mo", "1,000 creator profiles", "CSV export + CRM"],
+                      cta: "Upgrade",
+                      ctaDisabled: false,
+                      rotate: -1,
+                      popular: true,
+                    },
+                    {
+                      id: "agency",
+                      name: "Agency",
+                      price: "$249",
+                      period: "/mo",
+                      badge: "badge-amber",
+                      color: "#b07920",
+                      features: ["Unlimited campaigns", "Multi-brand workspace", "Team seats + API"],
+                      cta: "Upgrade",
+                      ctaDisabled: false,
+                      rotate: 1.5,
+                    },
+                  ] as const).map((plan) => (
+                    <motion.div
+                      key={plan.id}
+                      className="sticker-card p-5 flex flex-col gap-3 relative"
+                      style={{ rotate: `${plan.rotate}deg` }}
+                      whileHover={{ rotate: 0, y: -4, scale: 1.02 }}
+                      transition={{ type: "spring", stiffness: 280, damping: 20 }}
+                    >
+                      {"popular" in plan && plan.popular && (
+                        <span className="absolute -top-2 left-1/2 -translate-x-1/2 badge-sticker badge-lavender text-[9px] px-2 py-0.5 shadow-sm">⭐ Popular</span>
+                      )}
+                      <div className="flex items-start justify-between">
+                        <span className={`badge-sticker ${plan.badge} text-[9px]`}>{plan.name}</span>
+                      </div>
+                      <div>
+                        <span className="text-2xl font-bold text-ink">{plan.price}</span>
+                        <span className="text-xs text-[#7a7a7a]">{plan.period}</span>
+                      </div>
+                      <ul className="flex-1 grid gap-1.5">
+                        {plan.features.map((f) => (
+                          <li key={f} className="text-xs text-[#7a7a7a] flex items-start gap-1.5">
+                            <span className="text-success mt-0.5 shrink-0">✓</span>{f}
+                          </li>
+                        ))}
+                      </ul>
+                      <button
+                        id={`billing-plan-${plan.id}`}
+                        disabled={plan.ctaDisabled}
+                        onClick={async () => {
+                          const planId = plan.id as string;
+                          if (plan.ctaDisabled || planId === "free") return;
+                          try {
+                            const result = await api.createBillingCheckout({
+                              plan: plan.id as "starter" | "growth" | "agency",
+                              return_url: typeof window !== "undefined" ? window.location.origin + "/" : "/",
+                            });
+                            if (result.checkout_url) {
+                              window.location.href = result.checkout_url;
+                            }
+                          } catch (err) {
+                            console.error("Billing error:", err);
+                          }
+                        }}
+                        className={`w-full text-xs font-semibold py-2 rounded-lg transition-all cursor-pointer ${
+                          plan.ctaDisabled
+                            ? "bg-[#f3f0eb] text-[#7a7a7a] cursor-not-allowed"
+                            : "glow-btn-accent text-white"
+                        }`}
+                      >
+                        {plan.cta}
+                      </button>
+                    </motion.div>
+                  ))}
+                </div>
+
+                <div className="notebook-page p-5">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a] mb-3">What's included on all plans</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      ["✦", "AI brand intelligence extraction"],
+                      ["✦", "Compliance-first email verification"],
+                      ["✦", "YouTube & multi-adapter discovery"],
+                      ["✦", "Evidence-backed creator scoring"],
+                      ["✦", "Outreach draft generation"],
+                      ["✦", "GDPR/CAN-SPAM compliant pipeline"],
+                    ].map(([icon, text]) => (
+                      <div key={text} className="flex items-start gap-2 text-xs text-[#7a7a7a]">
+                        <span className="text-accent shrink-0 font-bold">{icon}</span>
+                        <span>{text}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* ── Tab: Export ── */}
             {activeTab === "export" && (
               <motion.div className="max-w-2xl mx-auto" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
@@ -1339,6 +1877,7 @@ function Workspace({
 
 // ─── Root Component ────────────────────────────────────────────────────────────
 export default function Home() {
+  const router = useRouter();
   const [user, setUser] = useState<AuthUser>(null);
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [creators, setCreators] = useState<CampaignCreator[]>([]);
@@ -1390,6 +1929,20 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
+    const pending = sessionStorage.getItem("cs_pending_campaign");
+    if (pending) {
+      sessionStorage.removeItem("cs_pending_campaign");
+      try {
+        const payload = JSON.parse(pending);
+        handleLaunch(payload);
+      } catch (err) {
+        console.error("Failed to parse pending campaign:", err);
+      }
+    }
+  }, [user]);
+
+  useEffect(() => {
     if (!campaign || jobSummaryFor(campaign).pending === 0) return;
     const timer = setInterval(async () => {
       try {
@@ -1413,6 +1966,11 @@ export default function Home() {
   }
 
   async function handleLaunch({ brand_url, goal, geo, platforms }: { brand_url: string; goal: string; geo: string; platforms: string[] }) {
+    if (!user) {
+      sessionStorage.setItem("cs_pending_campaign", JSON.stringify({ brand_url, goal, geo, platforms }));
+      router.push("/sign-in");
+      return;
+    }
     setIsAnalyzing(true);
     setCrawlerLogIdx(0);
     setMessage("");
@@ -1458,6 +2016,16 @@ export default function Home() {
       setMessage(err instanceof Error ? err.message : "Discovery failed.");
     } finally {
       setIsFindingCreators(false);
+    }
+  }
+
+  async function handleRefreshCreators() {
+    if (!campaign) return;
+    try {
+      const res = await api.getCampaignCreators(campaign.id);
+      setCreators(res.data);
+    } catch (err) {
+      console.error("Refresh creators failed:", err);
     }
   }
 
@@ -1589,6 +2157,7 @@ export default function Home() {
         creators={creators}
         onReset={() => { setCampaign(null); setCreators([]); setMessage(""); }}
         onFindCreators={handleFindCreators}
+        onRefreshCreators={handleRefreshCreators}
         onStatusChange={handleStatusChange}
         onPitchChange={handlePitchChange}
         onPitchSave={handlePitchSave}

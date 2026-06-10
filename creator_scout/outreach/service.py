@@ -199,3 +199,20 @@ def _clean_body(value: str) -> str:
 
 def _looks_like_email(value: str) -> bool:
     return "@" in value and "." in value.rsplit("@", 1)[-1]
+
+
+def verify_webhook_signature(body_bytes: bytes, signature: str, secret: str) -> bool:
+    import hashlib
+    import hmac
+
+    if not secret:
+        return False
+    sig = signature.strip()
+    if sig.startswith("sha256="):
+        sig = sig[7:]
+    try:
+        computed = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(computed.lower(), sig.lower())
+    except Exception:
+        return False
+

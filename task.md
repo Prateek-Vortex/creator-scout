@@ -68,6 +68,6 @@
 - Outreach draft generation is in scope; sending email is out of scope until compliance controls are implemented.
 
 ## Running Services
-- API server: `PYTHONPATH=. python3 -u apps/api/server.py` -> http://127.0.0.1:8765
+- API server: `PYTHONPATH=. python3 -u apps/api/main.py` -> http://127.0.0.1:8765
 - Web app: `npm run dev` in `apps/web/` -> http://localhost:3000
 - Worker: `PYTHONPATH=. python3 -u -m creator_scout.discovery.worker --loop --interval 30`

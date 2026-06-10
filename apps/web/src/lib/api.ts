@@ -345,4 +345,93 @@ export const api = {
       body: JSON.stringify(params),
     });
   },
+
+  async createBillingCheckout(params: {
+    plan: "starter" | "growth" | "agency";
+    name?: string;
+    email?: string;
+    return_url?: string;
+  }): Promise<{ checkout_url: string; session_id: string }> {
+    return apiRequest("/v1/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  },
+
+  async startGraphRun(params: {
+    campaign_id: string;
+    brand_url: string;
+    goal?: string;
+    geo?: string;
+    org_id?: string;
+  }): Promise<{ thread_id: string; status: string; next_node: string | null }> {
+    return apiRequest("/v1/graph/run", {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  },
+
+  async resumeGraphRun(
+    threadId: string,
+    params: { approved: boolean; feedback?: string }
+  ): Promise<{ thread_id: string; status: string; run_status: Record<string, unknown> | null }> {
+    return apiRequest(`/v1/graph/run/${threadId}/resume`, {
+      method: "POST",
+      body: JSON.stringify(params),
+    });
+  },
+
+  async getGraphStatus(threadId: string): Promise<{
+    thread_id: string;
+    paused: boolean;
+    current_node: string;
+    next_node: string | null;
+    shortlist: unknown[];
+    outreach_drafts: unknown[];
+    brand_brief: Record<string, unknown> | null;
+    error: string | null;
+  }> {
+    return apiRequest(`/v1/graph/run/${threadId}/status`);
+  },
+
+  async getDeveloperKeys(userId: string): Promise<{ data: { keys: DeveloperKey[]; credits: CreditStatus } }> {
+    return apiRequest(`/v1/settings/developer-keys?user_id=${userId}`);
+  },
+
+  async createDeveloperKey(userId: string, name: string): Promise<{ data: { id: string; plain_key: string } }> {
+    return apiRequest("/v1/settings/developer-keys", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, name }),
+    });
+  },
+
+  async revokeDeveloperKey(userId: string, keyId: string): Promise<{ success: boolean }> {
+    return apiRequest(`/v1/settings/developer-keys/${keyId}?user_id=${userId}`, {
+      method: "DELETE",
+    });
+  },
+
+  async updateProfile(userId: string, name: string, email: string): Promise<{ success: boolean }> {
+    return apiRequest("/v1/settings/profile", {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId, name, email }),
+    });
+  },
 };
+
+export interface DeveloperKey {
+  id: string;
+  name: string;
+  scopes: string[];
+  rate_limit_per_minute: number;
+  monthly_credit_limit: number;
+  created_at: string;
+}
+
+export interface CreditStatus {
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
+

@@ -289,6 +289,29 @@ class OutreachServiceTestCase(unittest.TestCase):
                 self.assertEqual(store.messages[0]["status"], expected_status)
                 self.assertEqual(bool(store.suppressed), suppresses)
 
+    def test_verify_webhook_signature_success(self) -> None:
+        import hmac
+        import hashlib
+        from creator_scout.outreach.service import verify_webhook_signature
+
+        secret = "super-secret"
+        body = b'{"event": "email.sent", "data": {"emailId": "123"}}'
+        signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+        self.assertTrue(verify_webhook_signature(body, signature, secret))
+        self.assertTrue(verify_webhook_signature(body, f"sha256={signature}", secret))
+
+    def test_verify_webhook_signature_failure(self) -> None:
+        from creator_scout.outreach.service import verify_webhook_signature
+
+        secret = "super-secret"
+        body = b'{"event": "email.sent", "data": {"emailId": "123"}}'
+
+        self.assertFalse(verify_webhook_signature(body, "wrong-signature", secret))
+        self.assertFalse(verify_webhook_signature(body, "", secret))
+        self.assertFalse(verify_webhook_signature(body, "sig", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
+
