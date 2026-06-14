@@ -11,7 +11,11 @@ import { getInsForgeClient, hasInsForgeConfig } from "@/lib/insforge";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PLATFORM_OPTIONS = ["youtube", "instagram", "tiktok", "x", "twitch", "podcast", "blog"];
-const PLATFORM_LIVE = new Set(["youtube"]);
+// YouTube is via the official Data API. Instagram, TikTok, X, and Twitch are
+// surfaced through TinyFish Agent listicle extraction — we index handles
+// from public listicle pages, we do not scrape the platforms themselves.
+// Podcast and blog are intentionally out-of-scope for the agent goal.
+const PLATFORM_LIVE = new Set(["youtube", "instagram", "tiktok", "x", "twitch"]);
 const CRM_COLUMNS = [
   { id: "shortlisted",     label: "Shortlisted",      color: "text-[#7a7a7a]" },
   { id: "contacted",       label: "Contacted",        color: "text-ink" },
@@ -887,7 +891,7 @@ function LandingPage({
                   })}
                 </div>
                 <p className="text-[10px] leading-relaxed text-[#7a7a7a] font-mono mt-2">
-                  YouTube discovery is live via the official API. Instagram, TikTok, X, Twitch, podcast, and blog adapters require platform-specific integrations and are coming soon.
+                  YouTube is live via the official Data API. Instagram, TikTok, X, and Twitch surface via TinyFish Agent listicle extraction — we index handles from public roundup pages without scraping those platforms directly. Podcast and blog are coming soon.
                 </p>
               </Field>
 
