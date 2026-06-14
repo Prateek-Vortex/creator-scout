@@ -254,10 +254,14 @@ Return ONLY a JSON object:
         }
 
     def list_shortlist(self, campaign_id: str, *, org_id: str | None = None, limit: int = 50) -> list[dict]:
-        campaign = self.get_campaign(campaign_id, org_id=org_id)
-        if not campaign:
-            return []
+        # Note: previously we called get_campaign() here to validate existence
+        # before listing creators, but get_campaign hits InsForge multiple times
+        # (~16s under load) and the shortlist endpoint timed out from the browser.
+        # list_campaign_creators is filtered by campaign_id, so an unknown id
+        # just yields an empty list — same observable behaviour, much cheaper.
         rows = self.store.list_campaign_creators(campaign_id, limit=min(max(int(limit), 1), 100))
+        if not rows:
+            return []
 
         # Fetch creator profiles in parallel to avoid sequential N × 4 InsForge round-trips
         from concurrent.futures import ThreadPoolExecutor, as_completed
