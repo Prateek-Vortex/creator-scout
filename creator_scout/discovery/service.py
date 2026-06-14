@@ -433,6 +433,24 @@ class DiscoveryService:
             },
         }
 
+    def list_campaigns(self, principal: ApiKeyPrincipal | None = None, limit: int = 20) -> dict:
+        campaigns = self.campaign_service.list_campaigns(
+            org_id=principal.org_id if principal else None,
+            limit=limit,
+        )
+        return {
+            "data": campaigns,
+            "meta": {
+                "request_id": f"req_{uuid4().hex}",
+                "credits_used": 0.0,
+                "freshness": "cached",
+                "confidence": 1.0,
+                "sources": [],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
     def build_campaign_shortlist(
         self,
         campaign_id: str,
@@ -544,6 +562,33 @@ class DiscoveryService:
             },
         }
 
+    def refine_outreach_draft(
+        self,
+        campaign_id: str,
+        creator_id: str,
+        principal: ApiKeyPrincipal | None = None,
+    ) -> dict | None:
+        request_id = f"req_{uuid4().hex}"
+        updated = self.campaign_service.refine_outreach_draft(
+            campaign_id,
+            creator_id,
+            org_id=principal.org_id if principal else None,
+        )
+        if not updated:
+            return None
+        return {
+            "data": updated,
+            "meta": {
+                "request_id": request_id,
+                "credits_used": 0.5,
+                "freshness": "fresh",
+                "confidence": updated.get("score_breakdown", {}).get("confidence") or 0.0,
+                "sources": [],
+                "missing_fields": [],
+                "next_page": None,
+            },
+        }
+
     def export_campaign_shortlist(
         self,
         campaign_id: str,
@@ -587,7 +632,9 @@ class DiscoveryService:
 
     def outreach_config(self, principal: ApiKeyPrincipal | None = None) -> dict:
         return {
-            "data": self.outreach_service.config_status(),
+            "data": self.outreach_service.config_status(
+                user_id=principal.org_id if principal else None
+            ),
             "meta": {
                 "request_id": f"req_{uuid4().hex}",
                 "credits_used": 0.0,
@@ -620,21 +667,6 @@ class DiscoveryService:
             "data": result,
             "meta": {
                 "request_id": request_id,
-                "credits_used": 0.0,
-                "freshness": "fresh",
-                "confidence": 1.0,
-                "sources": [],
-                "missing_fields": [],
-                "next_page": None,
-            },
-        }
-
-    def handle_autosend_webhook(self, payload: dict) -> dict:
-        result = self.outreach_service.handle_autosend_webhook(payload)
-        return {
-            "data": result,
-            "meta": {
-                "request_id": f"req_{uuid4().hex}",
                 "credits_used": 0.0,
                 "freshness": "fresh",
                 "confidence": 1.0,

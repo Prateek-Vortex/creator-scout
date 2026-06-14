@@ -8,6 +8,7 @@ from creator_scout.brand.service import BrandScanService
 from creator_scout.discovery.jobs import enqueue_discovery_query_job
 from creator_scout.discovery.models import Platform, SearchResult, to_jsonable
 from creator_scout.discovery.search import DiscoverySearch, parse_query
+from creator_scout.discovery.scoring import freshness_for, passes_filters, score_creator
 from creator_scout.discovery.store import DiscoveryStore, to_uuid
 
 
@@ -111,37 +112,40 @@ class CampaignService:
             raise PermissionError("Campaign does not belong to this organization")
         return _clean_campaign(campaign)
 
+    def list_campaigns(self, *, org_id: str | None = None, limit: int = 20) -> list[dict]:
+        return [_clean_campaign(campaign) for campaign in self.store.list_campaigns(org_id=org_id, limit=limit)]
+
     def generate_outreach_draft(self, campaign: dict, creator: CreatorProfile, pitch: str) -> dict:
         brief = campaign.get("brief") or {}
         brand_name = brief.get("brand_name", campaign.get("brand_url"))
         products = brief.get("products") or []
         product = products[0] if products else (brief.get("category") or "the product")
-        
+
         import sys
         IN_TEST = "unittest" in sys.modules or "pytest" in sys.modules or (len(sys.argv) > 0 and "pytest" in sys.argv[0])
         if IN_TEST:
-            return {
-                "subject": f"Creator collaboration with {brand_name}",
-                "body": f"Hi {creator.display_name},\n\nI love your content in the {creator.primary_niche} space! We are launching a campaign for {brand_name} around {product} and thought you'd be a perfect fit because {pitch}.\n\nWould you be open to a collaboration?\n\nBest,\nCreator Scout Team"
-            }
+            return _fallback_outreach(brand_name, product, creator, pitch)
         
-        prompt = f"""You are a professional influencer outreach manager. Write a warm, personalized, and concise email outreach pitch to a creator.
-The pitch should feel authentic, friendly, and founder-led.
+        prompt = f"""You are a founder-led creator outreach writer. Draft a short, warm, specific outreach email — under 110 words — that a real founder would send.
+
+Hard rules:
+- No emojis, no exclamation marks, no buzzwords ("amazing", "stoked", "love your vibe"), no flattery clichés.
+- Open with one concrete observation about the creator's niche or audience (one sentence), not "I love your content".
+- One sentence on why {brand_name} / {product} is relevant to them.
+- One clear, low-friction ask (15-min call OR reply with rate card).
+- Sign off as "Creator Scout Team" — no placeholders like [Your Name].
 
 Context:
-- Brand Name: {brand_name}
+- Brand: {brand_name}
 - Product: {product}
-- Campaign Goal: {campaign.get("goal")}
-- Creator Name: {creator.display_name}
-- Creator Niche: {creator.primary_niche}
-- Specific reason they fit: {pitch}
+- Campaign goal: {campaign.get("goal")}
+- Creator: {creator.display_name}
+- Niche: {creator.primary_niche}
+- Why they fit: {pitch}
 
-Output format:
-Return a JSON object containing:
-- "subject": A catchy, professional subject line.
-- "body": The email body text (do not include placeholders like [Your Name] at the end, sign off as "Creator Scout Team").
-
-Do not include any formatting or conversational filler, just the JSON."""
+Return ONLY a JSON object:
+- "subject": 5-8 word subject line, no colons, references the creator's niche or the product — not the word "Partnership".
+- "body": the email body text."""
 
         try:
             import json
@@ -172,10 +176,7 @@ Do not include any formatting or conversational filler, just the JSON."""
         except Exception as e:
             print(f"Error generating outreach draft: {e}")
         
-        return {
-            "subject": f"Creator collaboration with {brand_name}",
-            "body": f"Hi {creator.display_name},\n\nI love your content in the {creator.primary_niche} space! We are launching a campaign for {brand_name} around {product} and thought you'd be a perfect fit because {pitch}.\n\nWould you be open to a collaboration?\n\nBest,\nCreator Scout Team"
-        }
+        return _fallback_outreach(brand_name, product, creator, pitch)
 
     def build_shortlist(
         self,
@@ -195,28 +196,20 @@ Do not include any formatting or conversational filler, just the JSON."""
             queries = queries[: min(max(int(query_limit), 1), len(queries))]
         candidates = self._rank_campaign_candidates(campaign, queries, limit)
 
-        from concurrent.futures import ThreadPoolExecutor
         candidates_slice = candidates[:limit]
 
-        def get_draft_and_metadata(idx_candidate):
-            idx, (result, matched_queries) = idx_candidate
-            pitch = _pitch_for_result(campaign, result)
-            
-            # Generate personalized AI outreach draft for top 5, use fast fallback for the rest
-            if idx < 5:
-                outreach = self.generate_outreach_draft(campaign, result.creator, pitch)
-            else:
-                brand_name = (campaign.get("brief") or {}).get("brand_name", campaign.get("brand_url"))
-                brief_products = (campaign.get("brief") or {}).get("products") or []
-                product = brief_products[0] if brief_products else ((campaign.get("brief") or {}).get("category") or "the product")
-                outreach = {
-                    "subject": f"Collaboration with {brand_name}",
-                    "body": f"Hi {result.creator.display_name},\n\nI love your content in the {result.creator.primary_niche} space! We are launching a campaign for {brand_name} around {product} and thought you'd be a perfect fit because {pitch}.\n\nWould you be open to a collaboration?\n\nBest,\nCreator Scout Team"
-                }
-            return (result, matched_queries, pitch, outreach)
+        brand_name = (campaign.get("brief") or {}).get("brand_name", campaign.get("brand_url"))
+        brief_products = (campaign.get("brief") or {}).get("products") or []
+        product = brief_products[0] if brief_products else ((campaign.get("brief") or {}).get("category") or "the product")
 
-        with ThreadPoolExecutor(max_workers=min(5, len(candidates_slice) or 1)) as executor:
-            processed_results = list(executor.map(get_draft_and_metadata, enumerate(candidates_slice)))
+        # Build deterministic pitch + template outreach for every row. AI-refined
+        # outreach is generated lazily on demand (POST .../outreach/draft) so the
+        # shortlist build stays fast under load and InsForge rate-limit pressure.
+        processed_results = []
+        for result, matched_queries in candidates_slice:
+            pitch = _pitch_for_result(campaign, result)
+            outreach = _fallback_outreach(brand_name, product, result.creator, pitch)
+            processed_results.append((result, matched_queries, pitch, outreach))
 
         from creator_scout.discovery.normalize import stable_id
         from creator_scout.discovery.models import utc_now
@@ -319,6 +312,37 @@ Do not include any formatting or conversational filler, just the JSON."""
         cleaned["creator"] = to_jsonable(creator) if creator else None
         return cleaned
 
+    def refine_outreach_draft(
+        self,
+        campaign_id: str,
+        creator_id: str,
+        *,
+        org_id: str | None = None,
+    ) -> dict | None:
+        """Generate an AI-refined outreach draft for one shortlisted creator.
+
+        Called on demand from the UI; keeps the bulk shortlist build cheap.
+        """
+        campaign = self.get_campaign(campaign_id, org_id=org_id)
+        if not campaign:
+            return None
+        row = self.store.get_campaign_creator(campaign_id, creator_id)
+        if not row:
+            return None
+        creator = self.store.get_creator(creator_id)
+        if not creator:
+            return None
+        pitch = row.get("recommended_pitch") or ""
+        outreach = self.generate_outreach_draft(campaign, creator, pitch)
+        updated = self.store.update_campaign_creator(
+            campaign_id, creator_id, {"outreach_draft": outreach}
+        )
+        if not updated:
+            return None
+        cleaned = _clean_shortlist_row(updated)
+        cleaned["creator"] = to_jsonable(creator)
+        return cleaned
+
     def export_shortlist(self, campaign_id: str, *, org_id: str | None = None) -> dict | None:
         campaign = self.get_campaign(campaign_id, org_id=org_id)
         if not campaign:
@@ -354,6 +378,85 @@ Do not include any formatting or conversational filler, just the JSON."""
         topic_values = [category] if category and category != "unknown" else []
         geo = campaign.get("geo") or ""
         best_by_creator: dict[str, tuple[SearchResult, list[str]]] = {}
+
+        # Prefer the fresh creators produced by this campaign's discovery jobs.
+        # Global semantic search can miss just-ingested rows before embeddings or
+        # vector indexes catch up, which made successful jobs yield an empty shortlist.
+        #
+        # Hot-path optimization: pre-fetch every unique creator_id in parallel.
+        # Previously this looped sequentially across all jobs × all creator_ids,
+        # producing N HTTP round-trips to InsForge (up to ~350 per build). Under
+        # InsForge rate-limit / slowness pressure that hangs the request for
+        # minutes. One parallel fetch pool collapses it to ~1 round-trip wall time.
+        from concurrent.futures import ThreadPoolExecutor
+
+        job_creator_map: list[tuple[str, list[str]]] = []  # (job_query, [creator_id, ...])
+        unique_ids: list[str] = []
+        seen_ids: set[str] = set()
+        for job in campaign.get("jobs", []) or []:
+            output = job.get("output") or {}
+            ids = _dedupe([str(item) for item in output.get("creator_ids", []) if item])
+            if not ids:
+                continue
+            job_query = str(job.get("query") or output.get("query") or "").strip()
+            job_creator_map.append((job_query, ids))
+            for cid in ids:
+                if cid not in seen_ids:
+                    seen_ids.add(cid)
+                    unique_ids.append(cid)
+
+        creator_cache: dict[str, object] = {}
+        if unique_ids:
+            with ThreadPoolExecutor(max_workers=min(20, len(unique_ids))) as pool:
+                fetched = list(pool.map(self.store.get_creator, unique_ids))
+            for cid, creator in zip(unique_ids, fetched):
+                if creator is not None:
+                    creator_cache[cid] = creator
+
+        for job_query, creator_ids in job_creator_map:
+            campaign_query = parse_query(
+                {
+                    "text": " ".join(part for part in [job_query, category, geo] if part),
+                    "platforms": platform_values,
+                    "topics": topic_values,
+                    "limit": max(limit * 2, 25),
+                }
+            )
+            for creator_id in creator_ids:
+                creator = creator_cache.get(creator_id)
+                if not creator or not passes_filters(creator, campaign_query):
+                    continue
+                score, reasons, risks, missing, confidence = score_creator(
+                    creator,
+                    campaign_query,
+                    store=self.store,
+                    run_ai=False,
+                )
+                if score < 50:
+                    continue
+                result = SearchResult(
+                    creator=creator,
+                    fit_score=score,
+                    match_reasons=reasons,
+                    risk_flags=risks,
+                    missing_fields=missing,
+                    freshness=freshness_for(creator),
+                    confidence=confidence,
+                )
+                current = best_by_creator.get(creator.creator_id)
+                if current is None:
+                    best_by_creator[creator.creator_id] = (result, [job_query] if job_query else [])
+                    continue
+                current_result, matched_queries = current
+                if result.fit_score > current_result.fit_score:
+                    best_by_creator[creator.creator_id] = (result, _dedupe([*matched_queries, job_query]))
+                elif job_query:
+                    matched_queries.append(job_query)
+
+        if best_by_creator:
+            ranked = list(best_by_creator.values())
+            ranked.sort(key=lambda item: (item[0].fit_score, item[0].confidence), reverse=True)
+            return [(result, _dedupe(matched_queries)) for result, matched_queries in ranked]
 
         for query in queries:
             campaign_query = parse_query(
@@ -451,14 +554,42 @@ def _evidence_for_result(result: SearchResult) -> list[dict]:
     return evidence
 
 
+def _fallback_outreach(brand_name: str, product: str, creator: CreatorProfile, pitch: str) -> dict:
+    niche = (creator.primary_niche or "").strip()
+    niche_line = (
+        f"Your {niche} work is the closest fit I have seen for what we are building."
+        if niche
+        else "Your recent work is the closest fit I have seen for what we are building."
+    )
+    body = (
+        f"Hi {creator.display_name},\n\n"
+        f"{niche_line}\n\n"
+        f"We are launching {product} at {brand_name} and the angle in your last few uploads lines up directly with how we think about it. "
+        f"Quick context on the fit: {pitch}\n\n"
+        f"Open to a 15-minute call this week, or feel free to reply with your rate card and we can take it from there.\n\n"
+        f"— Creator Scout Team"
+    )
+    subject = f"{brand_name} x {creator.display_name}".strip(" x")
+    return {"subject": subject or f"{brand_name} collaboration", "body": body}
+
+
 def _pitch_for_result(campaign: dict, result: SearchResult) -> str:
     brief = campaign.get("brief") or {}
-    angles = brief.get("campaign_angles") or ["honest review"]
+    brand_name = brief.get("brand_name") or campaign.get("brand_url") or "the brand"
+    angles = brief.get("campaign_angles") or ["an honest first-impression review"]
     product = (brief.get("products") or [brief.get("category") or "the product"])[0]
     angle = angles[0].split(":", 1)[-1].strip()
+    reasons = [r for r in (result.match_reasons or []) if r][:2]
+    niche = (result.creator.primary_niche or "").strip()
+    audience_bits = []
+    if niche:
+        audience_bits.append(f"their {niche} audience")
+    if reasons:
+        audience_bits.append("strong signal on " + " and ".join(reasons))
+    audience = "; ".join(audience_bits) or "audience fit"
     return (
-        f"Invite {result.creator.display_name} for a {angle} around {product}. "
-        f"Lead with: {', '.join(result.match_reasons[:2]) or 'category fit'}."
+        f"Pitch {result.creator.display_name} on {angle} featuring {product} for {brand_name}. "
+        f"Why they fit: {audience}."
     )
 
 

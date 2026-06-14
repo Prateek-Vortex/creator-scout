@@ -71,7 +71,7 @@ def brand_scan_node(state: GraphState) -> dict:
             # Emit a summary token for SSE streaming
             "stream_tokens": [
                 f"Brand: {brief.brand_name}\n"
-                f"Category: {brief.primary_category}\n"
+                f"Category: {brief.category}\n"
                 f"Queries: {', '.join(queries[:3])}{'...' if len(queries) > 3 else ''}"
             ],
         }
@@ -170,9 +170,9 @@ def scoring_node(state: GraphState) -> dict:
     scored: list[dict] = []
     try:
         dq = DiscoveryQuery(
-            text=brand_brief.get("primary_category", ""),
+            text=brand_brief.get("category", ""),
             platforms=[Platform.YOUTUBE],
-            topics=[str(t).lower() for t in (brand_brief.get("target_creator_topics") or [])],
+            topics=[str(t).lower() for t in (brand_brief.get("best_creator_niches") or [])],
             locations=[brand_brief.get("geo", "")],
             languages=[],
         )

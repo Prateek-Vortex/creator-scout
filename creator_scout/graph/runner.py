@@ -16,6 +16,26 @@ from creator_scout.graph.state import GraphState
 logger = logging.getLogger(__name__)
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert LangGraph/LangChain objects into JSON-safe primitives."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    content = getattr(value, "content", None)
+    if content is not None:
+        return _json_safe(content)
+    return str(value)
+
+
+def _sse_event(payload: dict[str, Any]) -> str:
+    import json
+
+    return f"data: {json.dumps(_json_safe(payload))}\n\n"
+
+
 class GraphRunner:
     """High-level wrapper around the compiled LangGraph application."""
 
@@ -151,11 +171,11 @@ class GraphRunner:
             "paused": paused,
             "current_node": state.get("current_node", ""),
             "next_node": next_nodes[0] if next_nodes else None,
-            "shortlist": state.get("shortlist", []),
-            "brand_brief": state.get("brand_brief"),
-            "outreach_drafts": state.get("outreach_drafts", []),
-            "error": state.get("error"),
-            "state": safe_state,
+            "shortlist": _json_safe(state.get("shortlist", [])),
+            "brand_brief": _json_safe(state.get("brand_brief")),
+            "outreach_drafts": _json_safe(state.get("outreach_drafts", [])),
+            "error": _json_safe(state.get("error")),
+            "state": _json_safe(safe_state),
         }
 
     # ─── SSE streaming ────────────────────────────────────────────────────────
@@ -196,9 +216,8 @@ class GraphRunner:
         }
 
         import asyncio
-        import json
 
-        yield f"data: {json.dumps({'event': 'start', 'thread_id': thread_id})}\n\n"
+        yield _sse_event({"event": "start", "thread_id": thread_id})
 
         # Run graph in thread pool so we don't block the event loop
         loop = asyncio.get_event_loop()
@@ -208,7 +227,7 @@ class GraphRunner:
                 lambda: self.graph.invoke(initial_state, config),
             )
         except Exception as exc:
-            yield f"data: {json.dumps({'event': 'error', 'message': str(exc)})}\n\n"
+            yield _sse_event({"event": "error", "message": str(exc)})
             return
 
         # After invoke pauses, fetch the state and emit the brand brief
@@ -218,7 +237,13 @@ class GraphRunner:
         tokens = state.get("stream_tokens") or []
 
         for token in tokens:
-            yield f"data: {json.dumps({'event': 'token', 'text': token})}\n\n"
+            yield _sse_event({"event": "token", "text": token})
             await asyncio.sleep(0.01)
 
-        yield f"data: {json.dumps({'event': 'paused', 'thread_id': thread_id, 'next_node': list(snapshot.next)[0] if snapshot.next else None, 'brand_brief': brief, 'search_queries': state.get('search_queries', [])})}\n\n"
+        yield _sse_event({
+            "event": "paused",
+            "thread_id": thread_id,
+            "next_node": list(snapshot.next)[0] if snapshot.next else None,
+            "brand_brief": brief,
+            "search_queries": state.get("search_queries", []),
+        })

@@ -4,26 +4,16 @@ from typing import Any
 
 from creator_scout.discovery.models import utc_now
 from creator_scout.discovery.store import DiscoveryStore
-from creator_scout.outreach.autosend import AutoSendClient, AutoSendConfig, AutoSendError, extract_email_id
+from creator_scout.integrations.gmail.client import (
+    GmailClient,
+    GmailNotConnected,
+    GmailSendError,
+    extract_message_id,
+)
+from creator_scout.integrations.gmail.oauth import GmailOAuthError
 
 
 SENDABLE_PERMISSION_BASES = {"public_business_contact"}
-SEND_STATUSES = {
-    "email.sent": ("sent", "sent_at"),
-    "email.delivered": ("delivered", "delivered_at"),
-    "email.deferred": ("deferred", None),
-    "email.bounced": ("bounced", "bounced_at"),
-    "email.opened": ("opened", "opened_at"),
-    "email.spam_reported": ("spam_reported", "spam_reported_at"),
-    "email.unsubscribed": ("unsubscribed", "unsubscribed_at"),
-    "email.group_unsubscribed": ("unsubscribed", "unsubscribed_at"),
-}
-SUPPRESSING_EVENTS = {
-    "email.bounced": "autosend_bounced",
-    "email.spam_reported": "autosend_spam_reported",
-    "email.unsubscribed": "autosend_unsubscribed",
-    "email.group_unsubscribed": "autosend_group_unsubscribed",
-}
 
 
 class OutreachService:
@@ -32,14 +22,29 @@ class OutreachService:
         store: DiscoveryStore,
         *,
         campaign_service: Any,
-        autosend_client: AutoSendClient | None = None,
+        gmail_client: GmailClient | None = None,
     ) -> None:
         self.store = store
         self.campaign_service = campaign_service
-        self.autosend_client = autosend_client or AutoSendClient()
+        self.gmail_client = gmail_client or GmailClient(store)
 
-    def config_status(self) -> dict:
-        return AutoSendConfig.from_env().public_status()
+    def config_status(self, *, user_id: str | None) -> dict:
+        if not user_id:
+            return {
+                "enabled": False,
+                "connected": False,
+                "from_email": None,
+                "from_name": None,
+                "provider": "gmail",
+            }
+        status = self.gmail_client.get_connection_status(user_id)
+        return {
+            "enabled": bool(status["connected"]),
+            "connected": bool(status["connected"]),
+            "from_email": status["from_email"],
+            "from_name": status["from_name"],
+            "provider": "gmail",
+        }
 
     def send_campaign_creator_outreach(
         self,
@@ -60,10 +65,19 @@ class OutreachService:
         if not creator:
             raise ValueError("Creator profile is missing")
 
+        if not org_id:
+            raise PermissionError("Authentication required to send outreach")
+
         contact = self._sendable_email_contact(creator_id)
         draft = campaign_creator.get("outreach_draft") or {}
-        resolved_subject = _clean_subject(subject or draft.get("subject") or f"Creator collaboration with {campaign.get('brief', {}).get('brand_name') or campaign.get('brand_url')}")
-        resolved_body = _clean_body(body or draft.get("body") or campaign_creator.get("recommended_pitch") or "")
+        resolved_subject = _clean_subject(
+            subject
+            or draft.get("subject")
+            or f"Creator collaboration with {campaign.get('brief', {}).get('brand_name') or campaign.get('brand_url')}"
+        )
+        resolved_body = _clean_body(
+            body or draft.get("body") or campaign_creator.get("recommended_pitch") or ""
+        )
 
         provider_response: dict | None = None
         provider_message_id: str | None = None
@@ -71,21 +85,24 @@ class OutreachService:
         error: str | None = None
         sent_at: str | None = None
         try:
-            provider_response = self.autosend_client.send_email(
+            provider_response = self.gmail_client.send_email(
+                user_id=org_id,
                 to_email=contact["value"],
                 to_name=creator.display_name,
                 subject=resolved_subject,
                 body=resolved_body,
-                metadata={
+                headers={
                     "X-Creator-Scout-Campaign-Creator-Id": campaign_creator["id"],
                     "X-Creator-Scout-Campaign-Id": campaign_id,
                     "X-Creator-Scout-Creator-Id": creator_id,
                 },
             )
-            provider_message_id = extract_email_id(provider_response)
+            provider_message_id = extract_message_id(provider_response)
             status = "sent"
             sent_at = utc_now()
-        except AutoSendError as exc:
+        except GmailNotConnected:
+            raise
+        except (GmailSendError, GmailOAuthError) as exc:
             error = str(exc)
 
         message = self.store.create_outreach_message(
@@ -94,12 +111,12 @@ class OutreachService:
             recipient_email=contact["value"],
             subject=resolved_subject,
             body=resolved_body,
-            provider=self.autosend_client.provider,
+            provider=self.gmail_client.provider,
             provider_message_id=provider_message_id,
             provider_response=provider_response,
             status=status,
             error=error,
-            unsubscribe_group_id=self.autosend_client.config.unsubscribe_group_id,
+            unsubscribe_group_id=None,
             sent_at=sent_at,
         )
         if error:
@@ -114,53 +131,6 @@ class OutreachService:
         return {
             "outreach_message": message,
             "campaign_creator": updated,
-        }
-
-    def handle_autosend_webhook(self, payload: dict) -> dict:
-        event_type = str(payload.get("type") or payload.get("event") or "").strip()
-        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        provider_message_id = (
-            data.get("emailId")
-            or data.get("email_id")
-            or data.get("messageId")
-            or data.get("message_id")
-            or payload.get("emailId")
-        )
-        if not event_type:
-            raise ValueError("webhook type is required")
-        if not provider_message_id:
-            return {"handled": False, "reason": "missing_email_id", "event_type": event_type}
-
-        message = self.store.get_outreach_message_by_provider_id("autosend", str(provider_message_id))
-        if not message:
-            return {"handled": False, "reason": "message_not_found", "event_type": event_type}
-
-        status, timestamp_field = SEND_STATUSES.get(event_type, (None, None))
-        if not status:
-            return {"handled": False, "reason": "ignored_event", "event_type": event_type}
-
-        event_time = str(payload.get("createdAt") or payload.get("created_at") or utc_now())
-        patch: dict[str, object] = {
-            "status": status,
-            "provider_response": payload,
-        }
-        if timestamp_field:
-            patch[timestamp_field] = event_time
-        updated = self.store.update_outreach_message(message["id"], patch)
-
-        reason = SUPPRESSING_EVENTS.get(event_type)
-        if reason:
-            self.store.suppress_creator_contact(
-                contact_id=message.get("recipient_contact_id"),
-                email=message.get("recipient_email"),
-                reason=reason,
-            )
-
-        return {
-            "handled": True,
-            "event_type": event_type,
-            "outreach_message": updated,
-            "suppressed": bool(reason),
         }
 
     def _sendable_email_contact(self, creator_id: str) -> dict:
@@ -199,20 +169,3 @@ def _clean_body(value: str) -> str:
 
 def _looks_like_email(value: str) -> bool:
     return "@" in value and "." in value.rsplit("@", 1)[-1]
-
-
-def verify_webhook_signature(body_bytes: bytes, signature: str, secret: str) -> bool:
-    import hashlib
-    import hmac
-
-    if not secret:
-        return False
-    sig = signature.strip()
-    if sig.startswith("sha256="):
-        sig = sig[7:]
-    try:
-        computed = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(computed.lower(), sig.lower())
-    except Exception:
-        return False
-

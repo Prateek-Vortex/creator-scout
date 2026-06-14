@@ -101,7 +101,7 @@ Remember to output ONLY valid JSON."""
                     ],
                     "temperature": 0.2
                 },
-                timeout=3
+                timeout=60  # LLM calls can take 15-45s; allow up to 60s
             )
             if res and isinstance(res, dict) and res.get("success") and "text" in res:
                 response_text = res["text"].strip()

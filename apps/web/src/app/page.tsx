@@ -6,11 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { motion, useScroll, useTransform, useSpring } from "framer-motion";
 import { api } from "@/lib/api";
-import type { Campaign, CampaignCreator, CreatorContact, OutreachConfig, OutreachMessage } from "@/lib/api";
+import type { Campaign, CampaignCreator, CreatorAccount, CreatorContact, OutreachConfig, OutreachMessage } from "@/lib/api";
 import { getInsForgeClient, hasInsForgeConfig } from "@/lib/insforge";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const PLATFORM_OPTIONS = ["youtube", "instagram", "tiktok"];
+const PLATFORM_OPTIONS = ["youtube", "instagram", "tiktok", "x", "twitch", "podcast", "blog"];
+const PLATFORM_LIVE = new Set(["youtube"]);
 const CRM_COLUMNS = [
   { id: "shortlisted",     label: "Shortlisted",      color: "text-[#7a7a7a]" },
   { id: "contacted",       label: "Contacted",        color: "text-ink" },
@@ -39,10 +40,23 @@ const FINDER_LOGS = [
 ];
 const CRAWLER_LOGS = [
   "Resolving domain...",
-  "Crawling pages...",
-  "Extracting brand DNA...",
-  "Building campaign brief...",
-  "Done!",
+  "Fetching homepage...",
+  "Crawling brand pages...",
+  "Parsing product catalog...",
+  "Reading about / story page...",
+  "Extracting brand identity...",
+  "Detecting target audience...",
+  "Identifying content angles...",
+  "Analyzing tone & positioning...",
+  "Building brand brief...",
+  "Generating search queries...",
+  "Queuing discovery jobs...",
+  "Connecting to creator index...",
+  "Matching creator niches...",
+  "Scoring relevance signals...",
+  "Preparing campaign workspace...",
+  "Almost there...",
+  "Launching dashboard...",
 ];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -92,9 +106,8 @@ function outreachBlockReason(
 ): string | null {
   if (!item) return "Select a creator";
   if (isSending) return "Sending...";
-  if (!config) return "Checking AutoSend";
-  if (!config.has_api_key || !config.has_from_email) return "AutoSend config missing";
-  if (!config.has_unsubscribe_group) return "Unsubscribe group missing";
+  if (!config) return "Checking Gmail";
+  if (!config.connected) return "Gmail not connected";
   const emailContacts = item.creator?.contacts.filter((contact) => contact.contact_type?.toLowerCase() === "email") ?? [];
   if (!sendableEmailContact(item)) {
     if (emailContacts.some((contact) => contact.do_not_contact || contact.suppressed_at)) return "Contact suppressed";
@@ -127,6 +140,60 @@ function parseOutreachComposer(text: string, fallbackSubject: string): { subject
     subject: fallbackSubject,
     body: normalized,
   };
+}
+
+function formatCompactNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact",
+    maximumFractionDigits: value >= 1000 ? 1 : 0,
+  }).format(value);
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "-";
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function accountAudience(account: CreatorAccount): number | null {
+  return account.follower_count ?? account.subscriber_count ?? null;
+}
+
+function sumNumbers(values: Array<number | null | undefined>): number {
+  return values.reduce<number>((sum, value) => sum + (typeof value === "number" && Number.isFinite(value) ? value : 0), 0);
+}
+
+function averageNumbers(values: Array<number | null | undefined>): number | null {
+  const clean = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (!clean.length) return null;
+  return clean.reduce((sum, value) => sum + value, 0) / clean.length;
+}
+
+function creatorAudienceTotal(creator: CampaignCreator["creator"]): number {
+  return sumNumbers((creator?.accounts ?? []).map(accountAudience));
+}
+
+function creatorReportedViewsTotal(creator: CampaignCreator["creator"]): number {
+  return sumNumbers((creator?.accounts ?? []).map((account) => account.avg_views));
+}
+
+function creatorEngagementAverage(creator: CampaignCreator["creator"]): number | null {
+  return averageNumbers((creator?.accounts ?? []).map((account) => account.engagement_rate));
+}
+
+function publicContactCount(creator: CampaignCreator["creator"]): number {
+  return (creator?.contacts ?? []).filter((contact) => !contact.do_not_contact && !contact.suppressed_at).length;
+}
+
+function campaignMetrics(creators: CampaignCreator[]) {
+  const audience = sumNumbers(creators.map((item) => creatorAudienceTotal(item.creator)));
+  const reportedViews = sumNumbers(creators.map((item) => creatorReportedViewsTotal(item.creator)));
+  const contactable = creators.filter((item) => sendableEmailContact(item)).length;
+  const avgFit = averageNumbers(creators.map((item) => item.fit_score));
+  const platforms = Array.from(new Set(
+    creators.flatMap((item) => (item.creator?.accounts ?? []).map((account) => account.platform))
+  )).filter(Boolean);
+  return { audience, reportedViews, contactable, avgFit, platforms };
 }
 
 // ─── Tiny SVG Icon Kit ────────────────────────────────────────────────────────
@@ -209,6 +276,80 @@ function PlatformPill({ platform }: { platform: string }) {
     <span className={`badge-sticker ${cls} text-[9px]`}>
       {platform}
     </span>
+  );
+}
+
+function formatCampaignDate(value?: string | null): string {
+  if (!value) return "Unknown date";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Unknown date";
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function CampaignHistoryPanel({
+  campaigns,
+  isLoading,
+  onOpenCampaign,
+}: {
+  campaigns: Campaign[];
+  isLoading: boolean;
+  onOpenCampaign: (campaignId: string) => void;
+}) {
+  return (
+    <motion.div
+      className="max-w-4xl mx-auto mt-8 notebook-page p-5 text-left"
+      initial={{ opacity: 0, y: 18 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.65, duration: 0.45 }}
+    >
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-[#e8e4df] pb-4 mb-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Recent Campaigns</p>
+          <h2 className="text-lg font-semibold text-ink mt-1">Open an existing dashboard</h2>
+        </div>
+        {isLoading && <span className="badge-sticker badge-amber text-[9px]">Loading</span>}
+      </div>
+
+      {!isLoading && campaigns.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-[#d4cfc8] p-5 text-sm text-[#7a7a7a]">
+          No saved campaigns yet.
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {campaigns.slice(0, 4).map((campaign, index) => {
+            const summary = jobSummaryFor(campaign);
+            return (
+              <motion.button
+                key={campaign.id}
+                type="button"
+                onClick={() => onOpenCampaign(campaign.id)}
+                className="sticker-card p-4 text-left cursor-pointer"
+                style={{ rotate: STICKER_ROTATIONS[index % STICKER_ROTATIONS.length] }}
+                initial={{ opacity: 0, y: 16, rotate: 0 }}
+                animate={{ opacity: 1, y: 0, rotate: STICKER_ROTATIONS[index % STICKER_ROTATIONS.length] }}
+                transition={{ delay: index * 0.05, duration: 0.35 }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-ink truncate">{campaign.brief?.brand_name || campaign.brand_url}</p>
+                    <p className="mt-1 text-[11px] text-[#7a7a7a] font-mono truncate">{campaign.brand_url}</p>
+                  </div>
+                  <span className="badge-sticker badge-teal text-[9px] shrink-0">{campaign.status}</span>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <span className="badge-sticker badge-coral text-[9px]">{campaign.goal}</span>
+                  <span className="badge-sticker badge-lavender text-[9px]">{campaign.geo}</span>
+                  {summary.total > 0 && <span className="badge-sticker badge-amber text-[9px]">{summary.total} jobs</span>}
+                </div>
+                <p className="mt-4 text-[10px] uppercase tracking-widest text-[#b5afa6]">
+                  Updated {formatCampaignDate(campaign.updated_at)}
+                </p>
+              </motion.button>
+            );
+          })}
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -330,9 +471,17 @@ function Navbar({
 function LandingPage({
   onLaunch,
   apiHealth,
+  errorMessage,
+  recentCampaigns,
+  isLoadingCampaigns,
+  onOpenCampaign,
 }: {
   onLaunch: (params: { brand_url: string; goal: string; geo: string; platforms: string[] }) => void;
   apiHealth: ApiHealth;
+  errorMessage?: string;
+  recentCampaigns: Campaign[];
+  isLoadingCampaigns: boolean;
+  onOpenCampaign: (campaignId: string) => void;
 }) {
   const [brandUrl, setBrandUrl] = useState("");
   const formRef = useRef<HTMLDivElement>(null);
@@ -341,7 +490,7 @@ function LandingPage({
   const [goal, setGoal] = useState("ugc");
   const [geoCountry, setGeoCountry] = useState("India");
   const [geoCustom, setGeoCustom] = useState("");
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["youtube", "instagram", "tiktok"]);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["youtube"]);
 
   // Scroll-linked hero effect
   const { scrollYProgress } = useScroll({
@@ -513,6 +662,18 @@ function LandingPage({
             </div>
           </motion.form>
 
+          {/* Error banner — visible when campaign creation fails */}
+          {errorMessage && (
+            <motion.div
+              className="max-w-xl mx-auto mt-3 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 font-mono flex items-start gap-2"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <span className="shrink-0 mt-0.5">⚠</span>
+              <span>{errorMessage}</span>
+            </motion.div>
+          )}
+
           <motion.div
             className="mt-4 flex items-center justify-center gap-4"
             initial={{ opacity: 0 }}
@@ -528,6 +689,14 @@ function LandingPage({
             <span className="text-[#d4cfc8]">·</span>
             <span className="text-[10px] text-[#b5afa6]">No credit card required</span>
           </motion.div>
+
+          {(isLoadingCampaigns || recentCampaigns.length > 0) && (
+            <CampaignHistoryPanel
+              campaigns={recentCampaigns}
+              isLoading={isLoadingCampaigns}
+              onOpenCampaign={onOpenCampaign}
+            />
+          )}
         </motion.div>
       </section>
 
@@ -683,28 +852,43 @@ function LandingPage({
               <Field label="Target Platforms">
                 <div className="flex flex-wrap gap-3 mt-1.5">
                   {PLATFORM_OPTIONS.map((p) => {
+                    const isLive = PLATFORM_LIVE.has(p);
                     const isSelected = selectedPlatforms.includes(p);
-                    const activeColor = p === "youtube" ? "badge-coral" : p === "instagram" ? "badge-lavender" : "badge-teal";
+                    const activeColor =
+                      p === "youtube" ? "badge-coral"
+                      : p === "instagram" ? "badge-lavender"
+                      : p === "x" ? "badge-amber"
+                      : p === "twitch" ? "badge-lavender"
+                      : "badge-teal";
                     return (
                       <button
                         key={p}
                         type="button"
+                        disabled={!isLive}
+                        title={isLive ? "" : "Coming soon — official API integration in progress"}
                         onClick={() => {
+                          if (!isLive) return;
                           setSelectedPlatforms((prev) =>
                             prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
                           );
                         }}
-                        className={`px-4 py-2 rounded-lg border text-xs font-semibold capitalize cursor-pointer transition-all ${
-                          isSelected
-                            ? `badge-sticker ${activeColor} border-transparent shadow-sm`
-                            : "border-[#e8e4df] bg-white text-[#7a7a7a] hover:border-[#d4cfc8]"
+                        className={`px-4 py-2 rounded-lg border text-xs font-semibold capitalize transition-all ${
+                          !isLive
+                            ? "border-[#e8e4df] bg-[#f5f2ed] text-[#b5afa6] cursor-not-allowed opacity-60"
+                            : isSelected
+                            ? `badge-sticker ${activeColor} border-transparent shadow-sm cursor-pointer`
+                            : "border-[#e8e4df] bg-white text-[#7a7a7a] hover:border-[#d4cfc8] cursor-pointer"
                         }`}
                       >
                         {p}
+                        {!isLive && <span className="ml-1.5 text-[9px] font-normal opacity-70">soon</span>}
                       </button>
                     );
                   })}
                 </div>
+                <p className="text-[10px] leading-relaxed text-[#7a7a7a] font-mono mt-2">
+                  YouTube discovery is live via the official API. Instagram, TikTok, X, Twitch, podcast, and blog adapters require platform-specific integrations and are coming soon.
+                </p>
               </Field>
 
               <button
@@ -824,6 +1008,12 @@ function Workspace({
       setIsAgentRunning(true);
       api.getGraphStatus(stored)
         .then((status) => {
+          if (status.error && !status.paused) {
+            localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
+            setAgentThreadId(null);
+            setAgentStatus(null);
+            return;
+          }
           setAgentStatus({
             paused: status.paused,
             next_node: status.next_node,
@@ -929,13 +1119,19 @@ function Workspace({
     setAgentStatus(null);
     setAgentThreadId(null);
     try {
+      const apiToken = process.env.NEXT_PUBLIC_CREATOR_SCOUT_API_TOKEN ?? "";
+      if (!apiToken) {
+        throw new Error("Missing NEXT_PUBLIC_CREATOR_SCOUT_API_TOKEN for agent streaming.");
+      }
+      let currentThreadId: string | null = null;
       const es = new EventSource(
-        `/api/v1/graph/run/stream?campaign_id=${encodeURIComponent(campaign.id)}&brand_url=${encodeURIComponent(campaign.brand_url)}&goal=${encodeURIComponent(campaign.goal || "ugc")}`
+        `/api/v1/graph/run/stream?campaign_id=${encodeURIComponent(campaign.id)}&brand_url=${encodeURIComponent(campaign.brand_url)}&goal=${encodeURIComponent(campaign.goal || "ugc")}&api_key=${encodeURIComponent(apiToken)}`
       );
       es.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
           if (data.event === "start") {
+            currentThreadId = data.thread_id;
             setAgentThreadId(data.thread_id);
             localStorage.setItem(`cs_agent_thread_${campaign.id}`, data.thread_id);
           }
@@ -948,13 +1144,26 @@ function Workspace({
             setIsAgentRunning(false);
           }
           if (data.event === "error") {
+            if (currentThreadId) localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
             setAgentStatus({ paused: false, next_node: null, brand_brief: null, shortlist: [], outreach_drafts: [], error: data.message });
             es.close();
             setIsAgentRunning(false);
           }
         } catch {}
       };
-      es.onerror = () => { es.close(); setIsAgentRunning(false); };
+      es.onerror = () => {
+        es.close();
+        setIsAgentRunning(false);
+        if (currentThreadId) localStorage.removeItem(`cs_agent_thread_${campaign.id}`);
+        setAgentStatus({
+          paused: false,
+          next_node: null,
+          brand_brief: null,
+          shortlist: [],
+          outreach_drafts: [],
+          error: "Agent stream failed. Check that the Python API is running and reachable through the web server.",
+        });
+      };
     } catch (err) {
       setIsAgentRunning(false);
       setAgentStatus((s) => (s ? { ...s, error: err instanceof Error ? err.message : "Agent error" } : { paused: false, next_node: null, brand_brief: null, shortlist: [], outreach_drafts: [], error: err instanceof Error ? err.message : "Agent error" }));
@@ -996,6 +1205,7 @@ function Workspace({
     () => creators.find((c) => c.creator_id === selectedId) ?? creators[0] ?? null,
     [creators, selectedId]
   );
+  const metrics = useMemo(() => campaignMetrics(creators), [creators]);
   const activeSendableContact = sendableEmailContact(activeCreator);
   const activeOutreachMessage = latestOutreachMessage(activeCreator);
   const sendBlockReason = outreachBlockReason(activeCreator, outreachConfig, isSendingOutreach);
@@ -1178,7 +1388,7 @@ function Workspace({
                         </span>
                       </p>
                       <p className="text-[10px] text-[#7a7a7a] mt-0.5">
-                        Brand scan → discovery → scoring → shortlist with human approval gates.
+                        Experimental approval flow. It does not replace the saved shortlist until approved stages finish.
                       </p>
                     </div>
                     {!agentThreadId && !isAgentRunning && (
@@ -1219,7 +1429,7 @@ function Workspace({
 
                       {agentStatus.next_node === "query_planner_node" && agentStatus.brand_brief && (
                         <div className="grid grid-cols-2 gap-2 text-[10px] text-[#7a7a7a]">
-                          {(["brand_name", "primary_category", "price_positioning"] as const).map((k) => (
+                          {(["brand_name", "category", "price_positioning"] as const).map((k) => (
                             <div key={k}>
                               <p className="font-bold uppercase tracking-widest mb-0.5">{k.replace(/_/g, " ")}</p>
                               <p className="text-ink font-medium">{String(agentStatus.brand_brief![k] ?? "—")}</p>
@@ -1308,9 +1518,6 @@ function Workspace({
                           <span key={t} className="badge-sticker badge-teal text-[10px]">{t}</span>
                         ))}
                       </div>
-                      <p className="text-[11px] leading-relaxed text-[#7a7a7a] mt-3 max-w-xl">
-                        Instagram and TikTok are filters over cached/indexed profiles only. They are not live scraping providers until official adapters are added.
-                      </p>
                     </div>
                     <button
                       id="run-discovery-btn"
@@ -1375,7 +1582,31 @@ function Workspace({
                     <p className="text-[#7a7a7a] text-xs mt-1 mb-4 font-mono">Execute discovery to populate.</p>
                   </div>
                 ) : (
-                  <div className="grid gap-3 xl:grid-cols-[1fr_340px]">
+                  <div className="grid gap-4">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-xl border border-[#e8e4df] bg-white p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Potential Audience</p>
+                        <p className="mt-2 text-lg font-semibold text-ink font-mono">{formatCompactNumber(metrics.audience)}</p>
+                        <p className="mt-1 text-[10px] text-[#b5afa6]">followers/subscribers</p>
+                      </div>
+                      <div className="rounded-xl border border-[#e8e4df] bg-white p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Reported Views</p>
+                        <p className="mt-2 text-lg font-semibold text-ink font-mono">{formatCompactNumber(metrics.reportedViews)}</p>
+                        <p className="mt-1 text-[10px] text-[#b5afa6]">channel/profile total where available</p>
+                      </div>
+                      <div className="rounded-xl border border-[#e8e4df] bg-white p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Contactable</p>
+                        <p className="mt-2 text-lg font-semibold text-ink font-mono">{metrics.contactable}/{creators.length}</p>
+                        <p className="mt-1 text-[10px] text-[#b5afa6]">public business email</p>
+                      </div>
+                      <div className="rounded-xl border border-[#e8e4df] bg-white p-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Avg Fit</p>
+                        <p className="mt-2 text-lg font-semibold text-ink font-mono">{metrics.avgFit ? Math.round(metrics.avgFit) : "-"}</p>
+                        <p className="mt-1 text-[10px] text-[#b5afa6]">{metrics.platforms.join(", ") || "no platforms"}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 xl:grid-cols-[1fr_340px]">
                     {/* List */}
                     <div className="grid gap-2 max-h-[calc(100vh-220px)] overflow-y-auto scrollbar-thin pr-1">
                       {creators.map((item) => {
@@ -1402,6 +1633,10 @@ function Workspace({
                               </div>
                               <div className="flex items-center gap-2 mt-1 text-[10px] text-[#7a7a7a] font-mono flex-wrap">
                                 <span>{item.creator?.primary_niche || "—"}</span>
+                                <span className="text-[#d4cfc8]">/</span>
+                                <span>aud {formatCompactNumber(creatorAudienceTotal(item.creator))}</span>
+                                <span className="text-[#d4cfc8]">/</span>
+                                <span>views {formatCompactNumber(creatorReportedViewsTotal(item.creator))}</span>
                                 <span className="text-[#d4cfc8]">/</span>
                                 <span className={item.risks.length ? "text-danger" : "text-success"}>
                                   {item.risks.length ? item.risks[0] : "Clean"}
@@ -1438,6 +1673,25 @@ function Workspace({
                           </div>
 
                           <p className="text-xs text-[#7a7a7a] leading-relaxed">{activeCreator.creator.summary}</p>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-lg border border-[#e8e4df] bg-white p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a]">Audience</p>
+                              <p className="mt-1 text-sm font-semibold text-ink font-mono">{formatCompactNumber(creatorAudienceTotal(activeCreator.creator))}</p>
+                            </div>
+                            <div className="rounded-lg border border-[#e8e4df] bg-white p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a]">Reported Views</p>
+                              <p className="mt-1 text-sm font-semibold text-ink font-mono">{formatCompactNumber(creatorReportedViewsTotal(activeCreator.creator))}</p>
+                            </div>
+                            <div className="rounded-lg border border-[#e8e4df] bg-white p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a]">Engagement</p>
+                              <p className="mt-1 text-sm font-semibold text-ink font-mono">{formatPercent(creatorEngagementAverage(activeCreator.creator))}</p>
+                            </div>
+                            <div className="rounded-lg border border-[#e8e4df] bg-white p-3">
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-[#7a7a7a]">Contacts</p>
+                              <p className="mt-1 text-sm font-semibold text-ink font-mono">{publicContactCount(activeCreator.creator)}</p>
+                            </div>
+                          </div>
 
                           {/* Compliance Status */}
                           <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3">
@@ -1540,16 +1794,24 @@ function Workspace({
                           <div className="grid gap-1.5">
                             {activeCreator.creator.accounts.map((acc, i) => (
                               <a key={i} href={acc.profile_url} target="_blank" rel="noreferrer"
-                                className="flex items-center justify-between rounded-lg border border-[#e8e4df] bg-white hover:bg-[#f8f6f2] px-3 py-2 transition-all text-[11px]"
+                                className="rounded-lg border border-[#e8e4df] bg-white hover:bg-[#f8f6f2] px-3 py-2 transition-all text-[11px]"
                               >
-                                <span className="font-semibold text-ink capitalize">{acc.platform}</span>
-                                <span className="text-[#7a7a7a] font-mono">@{acc.handle}</span>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-ink capitalize">{acc.platform}</span>
+                                  <span className="text-[#7a7a7a] font-mono truncate">@{acc.handle}</span>
+                                </div>
+                                <div className="mt-2 grid grid-cols-3 gap-2 text-[9px] font-mono text-[#7a7a7a]">
+                                  <span>aud {formatCompactNumber(accountAudience(acc))}</span>
+                                  <span>views {formatCompactNumber(acc.avg_views)}</span>
+                                  <span>eng {formatPercent(acc.engagement_rate)}</span>
+                                </div>
                               </a>
                             ))}
                           </div>
                         </div>
                       )}
                     </div>
+                  </div>
                   </div>
                 )}
               </motion.div>
@@ -1598,7 +1860,7 @@ function Workspace({
                   ) : (
                     <div className="grid gap-4">
                       <div className="rounded-lg border border-[#e8e4df] bg-[#f8f6f2] p-3 text-[11px] font-mono grid gap-1.5">
-                        <div className="flex"><span className="text-[#7a7a7a] w-12">From:</span><span className="text-ink">{outreachConfig?.from_email || "AutoSend sender"}</span></div>
+                        <div className="flex"><span className="text-[#7a7a7a] w-12">From:</span><span className="text-ink">{outreachConfig?.from_email || "Gmail not connected"}</span></div>
                         <div className="flex"><span className="text-[#7a7a7a] w-12">To:</span><span className="text-ink">{activeSendableContact?.value || "-"}</span></div>
                         <div className="flex"><span className="text-[#7a7a7a] w-12">Status:</span><span className={sendBlockReason ? "text-warning" : "text-success"}>{sendBlockReason || "Ready to send"}</span></div>
                       </div>
@@ -1632,10 +1894,10 @@ function Workspace({
                             onSendOutreach(activeCreator.creator_id, parsed.subject, parsed.body);
                           }}
                           disabled={Boolean(sendBlockReason)}
-                          title={sendBlockReason || "Send with AutoSend"}
+                          title={sendBlockReason || "Send via Gmail"}
                           className="px-4 py-2 rounded-lg glow-btn-accent text-xs font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {isSendingOutreach ? "Sending..." : "Send with AutoSend"}
+                          {isSendingOutreach ? "Sending..." : "Send via Gmail"}
                         </button>
                       </div>
                     </div>
@@ -1880,9 +2142,11 @@ export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser>(null);
   const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [creators, setCreators] = useState<CampaignCreator[]>([]);
   const [apiHealth, setApiHealth] = useState<ApiHealth>("checking");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(false);
   const [isFindingCreators, setIsFindingCreators] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isSendingOutreach, setIsSendingOutreach] = useState(false);
@@ -1890,9 +2154,12 @@ export default function Home() {
   const [message, setMessage] = useState("");
 
   const [crawlerLogIdx, setCrawlerLogIdx] = useState(0);
+  const [analyzeStartTime, setAnalyzeStartTime] = useState<number>(0);
   useEffect(() => {
     if (!isAnalyzing) return;
-    const t = setInterval(() => setCrawlerLogIdx((p) => (p + 1) % CRAWLER_LOGS.length), 1200);
+    setAnalyzeStartTime(Date.now());
+    // Advance one step every 1.3s; stop at last step (don't loop)
+    const t = setInterval(() => setCrawlerLogIdx((p) => Math.min(p + 1, CRAWLER_LOGS.length - 1)), 1300);
     return () => clearInterval(t);
   }, [isAnalyzing]);
 
@@ -1943,6 +2210,71 @@ export default function Home() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) {
+      setCampaigns([]);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingCampaigns(true);
+    api.listCampaigns(20)
+      .then((res) => {
+        if (!cancelled) setCampaigns(res.data);
+      })
+      .catch((err) => {
+        console.error("Campaign history failed:", err);
+        if (!cancelled) setMessage(err instanceof Error ? err.message : "Could not load previous campaigns.");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingCampaigns(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const urlCampaignId = params.get("campaign");
+    const savedCampaignId = window.location.pathname.startsWith("/dashboard")
+      ? localStorage.getItem("cs_last_campaign_id")
+      : null;
+    const campaignId = urlCampaignId || savedCampaignId;
+
+    if (!campaignId || campaign?.id === campaignId) return;
+
+    const resolvedCampaignId = campaignId;
+    let cancelled = false;
+    async function loadDashboardCampaign() {
+      try {
+        const [campaignRes, creatorsRes] = await Promise.all([
+          api.getCampaign(resolvedCampaignId),
+          api.getCampaignCreators(resolvedCampaignId).catch(() => ({ data: [] })),
+        ]);
+        if (cancelled) return;
+        setCampaign(campaignRes.data);
+        setCreators(creatorsRes.data);
+        localStorage.setItem("cs_last_campaign_id", resolvedCampaignId);
+        if (!urlCampaignId && window.location.pathname.startsWith("/dashboard")) {
+          window.history.replaceState(null, "", `/dashboard?campaign=${encodeURIComponent(resolvedCampaignId)}`);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setMessage(err instanceof Error ? err.message : "Failed to load dashboard.");
+        }
+      }
+    }
+
+    loadDashboardCampaign();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaign?.id]);
+
+  useEffect(() => {
     if (!campaign || jobSummaryFor(campaign).pending === 0) return;
     const timer = setInterval(async () => {
       try {
@@ -1988,12 +2320,36 @@ export default function Home() {
         max_enrichment_urls_per_query: 5,
       });
       setCampaign(res.data.campaign);
+      setCampaigns((prev) => [res.data.campaign, ...prev.filter((item) => item.id !== res.data.campaign.id)]);
+      setCreators([]);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("cs_last_campaign_id", res.data.campaign.id);
+        window.history.pushState(null, "", `/dashboard?campaign=${encodeURIComponent(res.data.campaign.id)}`);
+      }
       const summary = jobSummaryFor(res.data.campaign);
       setMessage(`Success: queued ${summary.queued} discovery jobs for ${res.data.campaign.brief.brand_name || brand_url}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Error analyzing brand.");
     } finally {
       setIsAnalyzing(false);
+    }
+  }
+
+  async function handleOpenCampaign(campaignId: string) {
+    setMessage("");
+    try {
+      const [campaignRes, creatorsRes] = await Promise.all([
+        api.getCampaign(campaignId),
+        api.getCampaignCreators(campaignId).catch(() => ({ data: [] })),
+      ]);
+      setCampaign(campaignRes.data);
+      setCreators(creatorsRes.data);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("cs_last_campaign_id", campaignId);
+        window.history.pushState(null, "", `/dashboard?campaign=${encodeURIComponent(campaignId)}`);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not open campaign.");
     }
   }
 
@@ -2105,9 +2461,9 @@ export default function Home() {
           ],
         };
       }));
-      setMessage(`AutoSend accepted ${sentMessage.recipient_email || "the recipient"}.`);
+      setMessage(`Gmail sent to ${sentMessage.recipient_email || "the recipient"}.`);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "AutoSend send failed.");
+      setMessage(err instanceof Error ? err.message : "Gmail send failed.");
     } finally {
       setIsSendingOutreach(false);
     }
@@ -2125,18 +2481,20 @@ export default function Home() {
           <div className="flex items-center gap-3 mb-5 border-b border-[#e8e4df] pb-4">
             <span className="w-3 h-3 rounded-full bg-accent animate-pulse-ring" />
             <span className="text-sm font-semibold text-ink">Analyzing your brand</span>
+            <span className="ml-auto text-xs text-[#b5afa6] font-mono">~20s</span>
           </div>
           <div className="font-mono text-xs space-y-2.5">
             {CRAWLER_LOGS.map((log, i) => {
               const done = i < crawlerLogIdx;
               const active = i === crawlerLogIdx;
+              if (i > crawlerLogIdx + 1) return null; // only show upcoming next step
               return (
                 <motion.div
                   key={i}
                   className={`flex items-center gap-2 ${done ? "text-[#b5afa6]" : active ? "text-ink" : "text-[#d4cfc8]"}`}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.15 }}
+                  transition={{ delay: i * 0.05 }}
                 >
                   <span>{done ? "✓" : active ? "▸" : "○"}</span>
                   <span>{log}</span>
@@ -2145,6 +2503,9 @@ export default function Home() {
               );
             })}
           </div>
+          <p className="mt-6 text-[11px] text-[#b5afa6] text-center">
+            Crawling brand pages &amp; queuing AI discovery — this takes about 20 seconds.
+          </p>
         </motion.div>
       </div>
     );
@@ -2155,7 +2516,14 @@ export default function Home() {
       <Workspace
         campaign={campaign}
         creators={creators}
-        onReset={() => { setCampaign(null); setCreators([]); setMessage(""); }}
+        onReset={() => {
+          setCampaign(null);
+          setCreators([]);
+          setMessage("");
+          if (typeof window !== "undefined") {
+            window.history.pushState(null, "", "/");
+          }
+        }}
         onFindCreators={handleFindCreators}
         onRefreshCreators={handleRefreshCreators}
         onStatusChange={handleStatusChange}
@@ -2182,7 +2550,14 @@ export default function Home() {
         user={user}
         onSignOut={handleSignOut}
       />
-      <LandingPage onLaunch={handleLaunch} apiHealth={apiHealth} />
+      <LandingPage
+        onLaunch={handleLaunch}
+        apiHealth={apiHealth}
+        errorMessage={message || undefined}
+        recentCampaigns={campaigns}
+        isLoadingCampaigns={isLoadingCampaigns}
+        onOpenCampaign={handleOpenCampaign}
+      />
     </>
   );
 }

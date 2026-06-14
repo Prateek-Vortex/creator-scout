@@ -3,11 +3,26 @@ const API_BASE_URL =
   process.env.NEXT_PUBLIC_CREATOR_SCOUT_API_URL ?? "http://127.0.0.1:8765";
 
 function getRequestUrl(path: string): string {
+  // Server-side: always use the configured backend URL.
   if (typeof window === "undefined") {
     return `${API_BASE_URL}${path}`;
   }
-
-  return `/api${path}`;
+  // Browser-side: if NEXT_PUBLIC_CREATOR_SCOUT_API_URL is set, talk to the
+  // FastAPI directly. The Next dev-server rewrite has a short proxy timeout
+  // that aborts long-running endpoints like POST /v1/campaigns (which runs
+  // brand-scan + AI brief + outreach drafts inline, ~15–20 s) and surfaces it
+  // as a bare "500 Internal Server Error". Going direct keeps the original
+  // FastAPI status + JSON envelope intact. CORS is open on the API.
+  if (process.env.NEXT_PUBLIC_CREATOR_SCOUT_API_URL) {
+    return `${process.env.NEXT_PUBLIC_CREATOR_SCOUT_API_URL}${path}`;
+  }
+  if (path === "/health") {
+    return "/api/health";
+  }
+  if (path.startsWith("/v1/")) {
+    return `/api${path}`;
+  }
+  return path;
 }
 
 async function apiRequest<T = unknown>(
@@ -196,11 +211,17 @@ export interface OutreachMessage {
 
 export interface OutreachConfig {
   enabled: boolean;
-  has_api_key: boolean;
-  has_from_email: boolean;
-  has_unsubscribe_group: boolean;
+  connected: boolean;
   from_email: string | null;
-  from_name: string;
+  from_name: string | null;
+  provider: "gmail";
+}
+
+export interface GmailIntegrationStatus {
+  connected: boolean;
+  email: string | null;
+  from_email: string | null;
+  from_name: string | null;
 }
 
 export interface CreditUsage {
@@ -258,6 +279,10 @@ export const api = {
 
   async getUsage(): Promise<{ data: CreditUsage }> {
     return apiRequest("/v1/usage");
+  },
+
+  async listCampaigns(limit: number = 20): Promise<{ data: Campaign[] }> {
+    return apiRequest(`/v1/campaigns?limit=${limit}`);
   },
 
   async getCampaign(campaignId: string): Promise<{ data: Campaign }> {
@@ -346,6 +371,16 @@ export const api = {
     });
   },
 
+  async refineOutreachDraft(
+    campaignId: string,
+    creatorId: string
+  ): Promise<{ data: CampaignCreator }> {
+    return apiRequest(`/v1/campaigns/${campaignId}/creators/${creatorId}/outreach/draft`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
   async createBillingCheckout(params: {
     plan: "starter" | "growth" | "agency";
     name?: string;
@@ -417,6 +452,18 @@ export const api = {
       body: JSON.stringify({ user_id: userId, name, email }),
     });
   },
+
+  async getGmailStatus(): Promise<{ data: GmailIntegrationStatus }> {
+    return apiRequest("/v1/integrations/gmail");
+  },
+
+  async getGmailAuthUrl(): Promise<{ data: { url: string; state: string } }> {
+    return apiRequest("/v1/integrations/gmail/auth-url");
+  },
+
+  async disconnectGmail(): Promise<{ success: boolean }> {
+    return apiRequest("/v1/integrations/gmail", { method: "DELETE" });
+  },
 };
 
 export interface DeveloperKey {
@@ -433,5 +480,3 @@ export interface CreditStatus {
   limit: number;
   remaining: number;
 }
-
-

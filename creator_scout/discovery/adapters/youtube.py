@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from urllib.parse import urlencode
+import re
+from urllib.parse import urlencode, urlparse
 
 from creator_scout.discovery.adapters.base import AdapterError, AdapterResult
 from creator_scout.discovery.http import HttpClient
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+
+# Canonical channel IDs look like "UC..." (24 chars total). Path components that
+# match this are channels.list-able directly without spending search.list quota.
+_YT_CHANNEL_ID_RE = re.compile(r"^UC[0-9A-Za-z_-]{22}$")
 
 
 class YouTubeAdapter:
@@ -36,12 +41,73 @@ class YouTubeAdapter:
         return AdapterResult(records=records, provider=self.provider, raw={"search": search})
 
     def fetch_profile(self, profile_url: str) -> AdapterResult:
-        # YouTube Data API does not resolve every handle by URL directly in a cheap way.
-        # For P0, treat the last path segment as a query and hydrate the best channel.
-        handle = profile_url.rstrip("/").split("/")[-1].removeprefix("@")
-        result = self.discover(handle, limit=1)
+        # Three cheap paths before falling back to expensive search.list:
+        #   1. URL contains /channel/UCxxx  -> channels.list?id=UCxxx (1 unit)
+        #   2. URL contains /@handle        -> channels.list?forHandle=@handle (1 unit)
+        #   3. fallback                     -> discover(handle) (~101 units)
+        parsed = urlparse(profile_url if "://" in profile_url else f"https://{profile_url}")
+        segments = [seg for seg in parsed.path.split("/") if seg]
+
+        # /channel/UCxxx
+        for i, seg in enumerate(segments):
+            if seg == "channel" and i + 1 < len(segments):
+                channel_id = segments[i + 1]
+                if _YT_CHANNEL_ID_RE.match(channel_id):
+                    records = self._records_from_channels([channel_id])
+                    if records:
+                        return AdapterResult(
+                            records=records,
+                            provider=self.provider,
+                            source_url=profile_url,
+                            raw={"resolved_via": "channels_list_by_id"},
+                        )
+
+        # /@handle (or a plain handle as last segment)
+        handle = ""
+        for seg in segments:
+            if seg.startswith("@"):
+                handle = seg
+                break
+        if not handle and segments:
+            last = segments[-1]
+            if not last.startswith("watch") and "=" not in last:
+                handle = "@" + last.removeprefix("@")
+        if handle:
+            channel_id = self._channel_id_for_handle(handle)
+            if channel_id:
+                records = self._records_from_channels([channel_id])
+                if records:
+                    return AdapterResult(
+                        records=records,
+                        provider=self.provider,
+                        source_url=profile_url,
+                        raw={"resolved_via": "channels_list_by_handle"},
+                    )
+
+        # Last resort: spend the 100-unit search.list budget.
+        result = self.discover(handle.removeprefix("@") or segments[-1] if segments else "", limit=1)
         result.source_url = profile_url
         return result
+
+    def _channel_id_for_handle(self, handle: str) -> str | None:
+        """Resolve a @handle to its canonical UCxxx channel_id using the cheap
+        channels.list?forHandle endpoint (1 unit). Returns None on failure.
+        """
+        try:
+            body = self._get(
+                "/channels",
+                {
+                    "part": "id",
+                    "forHandle": handle,
+                    "key": self.api_key,
+                },
+            )
+        except AdapterError:
+            return None
+        items = body.get("items") or []
+        if not items:
+            return None
+        return items[0].get("id")
 
     def _records_from_channels(self, channel_ids: list[str]) -> list[dict]:
         if not channel_ids:

@@ -183,10 +183,45 @@ def ingest_records(store: DiscoveryStore, records: list[dict[str, Any]]) -> list
     for record in records:
         try:
             creator = creator_from_record(record)
+            # Before upserting, check whether any of the input profile_urls
+            # already belongs to an existing creator. If yes, reuse that
+            # creator_id so per-account stats (subscriber_count, avg_views)
+            # merge into the existing rows instead of creating a duplicate
+            # creator with a slightly different identity hash (which happens
+            # when a listicle-extracted creator with handles on multiple
+            # platforms is later refreshed via a single-platform API).
+            existing_id = _existing_creator_id_for_accounts(store, creator)
+            if existing_id and existing_id != creator.creator_id:
+                creator = _rebind_creator(creator, existing_id)
             store.upsert_creator(creator)
             creator_ids.append(creator.creator_id)
         except Exception as exc:  # noqa: BLE001
             name = record.get("display_name", "<unknown>")
             print(f"[ingest] WARNING: skipped creator {name!r}: {exc}", file=sys.stderr)
     return creator_ids
+
+
+def _existing_creator_id_for_accounts(store: DiscoveryStore, creator) -> str | None:
+    for account in creator.accounts:
+        url = account.profile_url
+        if not url:
+            continue
+        try:
+            existing = store.find_by_profile_url(url)
+        except Exception:  # noqa: BLE001
+            continue
+        if existing is not None:
+            return existing.creator_id
+    return None
+
+
+def _rebind_creator(creator, new_creator_id: str):
+    """Return a copy of `creator` with creator_id and source_url references
+    updated to point at the canonical existing record. Accounts/contacts/sources
+    are reused as-is; the store layer keys their stable_ids off the (new)
+    creator_id when upserting.
+    """
+    from dataclasses import replace
+
+    return replace(creator, creator_id=new_creator_id)
 

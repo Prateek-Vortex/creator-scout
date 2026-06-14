@@ -18,7 +18,7 @@ import logging
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -44,10 +44,15 @@ def _get_runner():
 def _get_api_key(
     authorization: Annotated[str | None, Header(alias="authorization")] = None,
     x_api_key: Annotated[str | None, Header(alias="x-api-key")] = None,
+    api_key: Annotated[str | None, Query(alias="api_key")] = None,
 ) -> str | None:
+    """Extract API key from Authorization header, x-api-key header, or ?api_key= query param.
+
+    Query param support is needed for EventSource (SSE) which cannot set custom headers.
+    """
     if authorization and authorization.lower().startswith("bearer "):
         return authorization.split(" ", 1)[1].strip()
-    return x_api_key
+    return x_api_key or api_key
 
 
 def _require_api_key(api_key: str | None = Depends(_get_api_key)) -> str:
@@ -221,6 +226,50 @@ async def get_graph_status(
         return runner.get_run_status(thread_id)
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.get("/run/stream")
+async def stream_new_graph_run(
+    campaign_id: str | None = None,
+    brand_url: str | None = None,
+    goal: str = "ugc",
+    geo: str = "India",
+    org_id: str | None = None,
+    api_key: str = Depends(_require_api_key),
+):
+    """SSE stream - starts a brand-new graph run (no thread_id required).
+
+    This is the primary endpoint called by the frontend 'Start Agent Run' button.
+    Events emitted:
+    - ``{"event": "start", "thread_id": "..."}``
+    - ``{"event": "token", "text": "..."}``
+    - ``{"event": "paused", "thread_id": "...", "next_node": "...", "brand_brief": {...}}``
+    - ``{"event": "error", "message": "..."}``
+    """
+    if not brand_url or not campaign_id:
+        raise HTTPException(status_code=422, detail="brand_url and campaign_id are required")
+
+    runner = _get_runner()
+
+    async def generate():
+        async for chunk in runner.stream_brand_scan(
+            campaign_id=campaign_id,
+            brand_url=brand_url,
+            goal=goal,
+            geo=geo,
+            org_id=org_id,
+        ):
+            yield chunk
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/run/{thread_id}/stream")

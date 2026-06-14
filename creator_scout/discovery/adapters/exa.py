@@ -33,14 +33,18 @@ class ExaAdapter:
     # ------------------------------------------------------------------
 
     def discover(self, query: str, limit: int = 10) -> AdapterResult:
-        """Search Exa and map results to creator profile records."""
+        """Search Exa and map results to creator profile records.
+
+        Uses `type: "auto"` (balanced relevance/speed) and `highlights` content
+        mode per the project's Exa configuration. See
+        https://docs.exa.ai/reference/search-api-guide-for-coding-agents
+        """
         payload: dict = {
             "query": query,
             "numResults": min(limit, 25),
-            "useAutoprompt": True,
-            "type": "neural",
+            "type": "auto",
             "contents": {
-                "text": {"maxCharacters": 500},
+                "highlights": True,
             },
         }
         response = self.http.post_json(
@@ -63,8 +67,8 @@ class ExaAdapter:
                 continue
 
             platform = infer_platform_from_url(url)
-            text = item.get("text") or ""
-            snippet = text[:500]
+            highlights = item.get("highlights") or []
+            snippet = " ".join(h for h in highlights if h)[:500] if highlights else (item.get("text") or "")[:500]
             emails = extract_public_emails(snippet)
 
             record: dict = {
@@ -90,6 +94,7 @@ class ExaAdapter:
                             "author": item.get("author"),
                             "published_date": item.get("publishedDate"),
                             "score": item.get("score"),
+                            "highlights": highlights,
                         },
                     }
                 ],

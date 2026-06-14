@@ -18,10 +18,10 @@ class TinyFishAdapter:
         self.http = http or HttpClient()
 
     def discover(self, query: str, limit: int = 10) -> AdapterResult:
-        params = urlencode({"q": query, "limit": min(limit, 20)})
+        params = urlencode({"query": query, "limit": min(limit, 20)})
         response = self.http.get(
             f"https://api.search.tinyfish.ai?{params}",
-            {"authorization": f"Bearer {self.api_key}"},
+            {"authorization": f"Bearer {self.api_key}", "x-api-key": self.api_key},
         )
         if response.status >= 400:
             raise AdapterError(f"TinyFish Search error {response.status}: {response.text()[:300]}")
@@ -65,25 +65,29 @@ class TinyFishAdapter:
         assert_public_fetch_allowed(profile_url)
         response = self.http.post_json(
             "https://api.fetch.tinyfish.ai",
-            {"url": profile_url, "formats": ["markdown", "html"]},
-            {"authorization": f"Bearer {self.api_key}"},
+            {"urls": [profile_url]},
+            {"authorization": f"Bearer {self.api_key}", "x-api-key": self.api_key},
         )
         if response.status >= 400:
             raise AdapterError(f"TinyFish Fetch error {response.status}: {response.text()[:300]}")
         body = response.json()
-        markdown = body.get("markdown") or body.get("data", {}).get("markdown", "")
-        emails = extract_public_emails(markdown)
+        results = body.get("results") or []
+        item = results[0] if results else {}
+        text = item.get("text") or ""
+        title = item.get("title") or profile_url
+        description = item.get("description") or ""
+        emails = extract_public_emails(text)
         record = {
-            "display_name": body.get("title") or body.get("data", {}).get("title") or profile_url,
+            "display_name": title,
             "primary_niche": "creator",
-            "summary": (body.get("description") or body.get("data", {}).get("description") or markdown[:500]),
+            "summary": description or text[:500],
             "topics": [],
             "accounts": [
                 {
                     "platform": infer_platform_from_url(profile_url).value,
                     "handle": normalize_handle(profile_url.rstrip("/").split("/")[-1]),
                     "profile_url": profile_url,
-                    "bio": markdown[:500],
+                    "bio": (description or text)[:500],
                 }
             ],
             "contacts": [
@@ -103,8 +107,10 @@ class TinyFishAdapter:
                     "confidence": 0.78,
                     "fields_found": {
                         "emails": emails,
-                        "title": body.get("title"),
-                        "description": body.get("description"),
+                        "title": title,
+                        "description": description,
+                        "final_url": item.get("final_url"),
+                        "language": item.get("language"),
                     },
                 }
             ],

@@ -18,15 +18,26 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from creator_scout.config import load_env
 from creator_scout.discovery.auth import authenticate_api_key
 from creator_scout.discovery.service import DiscoveryService
 from creator_scout.discovery.store import DiscoveryStore
-from creator_scout.outreach.service import verify_webhook_signature
+from creator_scout.integrations.gmail.client import GmailClient
+from creator_scout.integrations.gmail.oauth import (
+    GmailOAuthConfig,
+    GmailOAuthError,
+    build_consent_url,
+    consume_state,
+    exchange_code,
+    expires_at_iso,
+    fetch_userinfo,
+    issue_state,
+)
+from creator_scout.integrations.gmail.store import GmailConnectionStore
 
 load_env()
 
@@ -102,6 +113,18 @@ async def permission_error_handler(request: Request, exc: PermissionError):
     return JSONResponse(status_code=402, content={"error": {"message": str(exc), "status": 402}})
 
 
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"error": {"message": str(exc), "status": 400}})
+
+
+@app.exception_handler(RuntimeError)
+async def runtime_error_handler(request: Request, exc: RuntimeError):
+    message = str(exc)
+    status_code = 503 if "InsForge" in message else 500
+    return JSONResponse(status_code=status_code, content={"error": {"message": message, "status": status_code}})
+
+
 # ─── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -125,6 +148,15 @@ async def get_outreach_config(
     principal=Depends(_require_principal),
 ):
     return _get_service(request).outreach_config(principal)
+
+
+@app.get("/v1/campaigns")
+async def list_campaigns(
+    request: Request,
+    principal=Depends(_require_principal),
+    limit: int = 20,
+):
+    return _get_service(request).list_campaigns(principal, limit=limit)
 
 
 @app.get("/v1/campaigns/{campaign_id}/creators")
@@ -190,29 +222,6 @@ async def get_creator(
 
 # ─── POST routes ──────────────────────────────────────────────────────────────
 
-@app.post("/v1/webhooks/autosend")
-async def autosend_webhook(request: Request):
-    body_bytes = await request.body()
-    payload = {}
-    try:
-        import json
-        payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    secret = os.environ.get("AUTOSEND_WEBHOOK_SECRET", "").strip()
-    if secret:
-        signature = (
-            request.headers.get("x-autosend-signature")
-            or request.headers.get("X-AutoSend-Signature")
-            or ""
-        )
-        if not signature or not verify_webhook_signature(body_bytes, signature, secret):
-            raise HTTPException(status_code=401, detail="Invalid webhook signature")
-
-    return _get_service(request).handle_autosend_webhook(payload)
-
-
 @app.post("/v1/billing/webhook")
 async def billing_webhook(request: Request):
     body_bytes = await request.body()
@@ -254,6 +263,19 @@ async def create_campaign(
         status_code=202,
         content=_get_service(request).create_campaign(payload, principal),
     )
+
+
+@app.post("/v1/campaigns/{campaign_id}/creators/{creator_id}/outreach/draft")
+async def refine_outreach_draft(
+    campaign_id: str,
+    creator_id: str,
+    request: Request,
+    principal=Depends(_require_principal),
+):
+    response = _get_service(request).refine_outreach_draft(campaign_id, creator_id, principal)
+    if response is None:
+        raise HTTPException(status_code=404, detail="Campaign creator not found")
+    return response
 
 
 @app.post("/v1/campaigns/{campaign_id}/creators/{creator_id}/outreach/send")
@@ -486,6 +508,92 @@ async def update_settings_profile(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Database update failed: {exc}")
 
+    return {"success": True}
+
+
+# ─── Gmail OAuth integration ──────────────────────────────────────────────────
+
+def _web_app_base_url() -> str:
+    return os.environ.get("WEB_APP_URL", "http://localhost:3000").rstrip("/")
+
+
+@app.get("/v1/integrations/gmail")
+async def get_gmail_integration_status(
+    request: Request,
+    principal=Depends(_require_principal),
+):
+    client = GmailClient(_get_store(request))
+    return {"data": client.get_connection_status(principal.org_id)}
+
+
+@app.get("/v1/integrations/gmail/auth-url")
+async def get_gmail_auth_url(
+    request: Request,
+    principal=Depends(_require_principal),
+):
+    try:
+        config = GmailOAuthConfig.from_env()
+    except GmailOAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    state = issue_state(principal.org_id)
+    return {"data": {"url": build_consent_url(config, state), "state": state}}
+
+
+@app.get("/v1/integrations/gmail/callback")
+async def gmail_oauth_callback(
+    request: Request,
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+):
+    base = _web_app_base_url()
+    if error:
+        return RedirectResponse(f"{base}/settings?gmail=error&reason={error}")
+    if not code or not state:
+        return RedirectResponse(f"{base}/settings?gmail=error&reason=missing_code_or_state")
+
+    user_id = consume_state(state)
+    if not user_id:
+        return RedirectResponse(f"{base}/settings?gmail=error&reason=invalid_state")
+
+    try:
+        config = GmailOAuthConfig.from_env()
+        token_data = exchange_code(config, code)
+        access_token = token_data.get("access_token")
+        refresh_token = token_data.get("refresh_token")
+        if not access_token or not refresh_token:
+            return RedirectResponse(
+                f"{base}/settings?gmail=error&reason=missing_tokens"
+            )
+        userinfo = fetch_userinfo(access_token)
+        email = userinfo.get("email") or ""
+        scopes_str = token_data.get("scope") or ""
+        scopes = [s for s in scopes_str.split(" ") if s]
+
+        store = GmailConnectionStore(_get_store(request))
+        store.upsert(
+            user_id=user_id,
+            email=email,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at_iso(token_data.get("expires_in")),
+            scopes=scopes,
+        )
+    except (GmailOAuthError, RuntimeError) as exc:
+        from urllib.parse import quote
+        return RedirectResponse(
+            f"{base}/settings?gmail=error&reason={quote(str(exc)[:200])}"
+        )
+
+    return RedirectResponse(f"{base}/settings?gmail=connected")
+
+
+@app.delete("/v1/integrations/gmail")
+async def disconnect_gmail(
+    request: Request,
+    principal=Depends(_require_principal),
+):
+    GmailClient(_get_store(request)).disconnect(principal.org_id)
     return {"success": True}
 
 

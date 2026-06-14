@@ -1,4 +1,5 @@
 import os
+import logging
 import requests
 import sys
 import time
@@ -20,6 +21,8 @@ from creator_scout.discovery.models import (
 )
 from creator_scout.discovery.normalize import stable_id
 
+
+logger = logging.getLogger(__name__)
 
 IN_TEST = "unittest" in sys.modules or "pytest" in sys.modules or (len(sys.argv) > 0 and "pytest" in sys.argv[0])
 UUID_TO_ORIGINAL = {}
@@ -200,18 +203,38 @@ class DiscoveryStore:
         return h
 
     def _send_request(self, method: str, url: str, **kwargs) -> requests.Response:
-        attempts = 5
+        attempts = 4
+        last_exc: requests.exceptions.RequestException | None = None
         for attempt in range(attempts):
-            response = requests.request(method, url, **kwargs)
+            try:
+                response = requests.request(method, url, **kwargs)
+            except requests.exceptions.RequestException as exc:
+                last_exc = exc
+                if attempt == attempts - 1:
+                    raise RuntimeError(f"InsForge request failed after {attempts} attempts: {exc}") from exc
+                time.sleep(min(0.75 * (2 ** attempt), 8.0))
+                continue
             if response.status_code not in _RETRYABLE_HTTP_STATUSES or attempt == attempts - 1:
                 return response
+            # 429s from InsForge tend to clear in 10–30s — give them room.
+            is_rate_limited = response.status_code == 429
             retry_after = response.headers.get("Retry-After")
             try:
-                delay = float(retry_after) if retry_after else 0.75 * (2 ** attempt)
+                delay = float(retry_after) if retry_after else 1.5 * (2 ** attempt)
             except ValueError:
-                delay = 0.75 * (2 ** attempt)
-            time.sleep(min(delay, 8.0))
+                delay = 1.5 * (2 ** attempt)
+            cap = 30.0 if is_rate_limited else 8.0
+            time.sleep(min(delay, cap))
+        if last_exc:
+            raise RuntimeError(f"InsForge request failed after {attempts} attempts: {last_exc}") from last_exc
         return response
+
+    def _post_records_safe(self, path: str, records: list[dict], *, prefer: str, timeout: int) -> None:
+        """Best-effort version of _post_records - logs on failure but never raises."""
+        try:
+            self._post_records(path, records, prefer=prefer, timeout=timeout)
+        except Exception as exc:
+            logger.warning("[store] FK scaffold write failed (non-fatal): %s - %s", path, exc)
 
     def _post_records(self, path: str, records: list[dict], *, prefer: str, timeout: int) -> None:
         response = self._send_request(
@@ -224,7 +247,7 @@ class DiscoveryStore:
         if response.status_code >= 400:
             raise RuntimeError(f"InsForge REST request failed: {response.status_code} - {response.text}")
 
-    def _request(self, method: str, path: str, json_data: Any = None, params: dict = None, headers: dict = None, timeout: int = 30) -> Any:
+    def _request(self, method: str, path: str, json_data: Any = None, params: dict = None, headers: dict = None, timeout: int = 10) -> Any:
         path = _normalize_path(path)
         if json_data is not None:
             json_data = _normalize_uuids(json_data)
@@ -257,27 +280,30 @@ class DiscoveryStore:
             campaign_ids = list(set(campaign_ids))
             api_key_ids = list(set(api_key_ids))
 
+            # FK scaffolding: best-effort, non-blocking - never abort the main request
+            _scaffold_timeout = 5  # Short timeout for scaffolding writes
+
             if "/organizations" not in path:
                 for oid in org_ids:
-                    self._post_records(
+                    self._post_records_safe(
                         "/api/database/records/organizations",
                         [{"id": oid, "name": f"Team {oid}", "plan": "free"}],
                         prefer="resolution=ignore-duplicates",
-                        timeout=timeout,
+                        timeout=_scaffold_timeout,
                     )
 
             if "/developer_api_keys" not in path:
                 for kid in api_key_ids:
                     default_org = org_ids[0] if org_ids else to_uuid("org_test")
                     if "/organizations" not in path:
-                        self._post_records(
+                        self._post_records_safe(
                             "/api/database/records/organizations",
                             [{"id": default_org, "name": f"Team {default_org}", "plan": "free"}],
                             prefer="resolution=ignore-duplicates",
-                            timeout=timeout,
+                            timeout=_scaffold_timeout,
                         )
 
-                    self._post_records(
+                    self._post_records_safe(
                         "/api/database/records/developer_api_keys",
                         [{
                             "id": kid,
@@ -289,23 +315,23 @@ class DiscoveryStore:
                             "monthly_credit_limit": 1000.0,
                         }],
                         prefer="resolution=ignore-duplicates",
-                        timeout=timeout,
+                        timeout=_scaffold_timeout,
                     )
 
             if "/campaigns" not in path:
                 for cid in campaign_ids:
                     default_org = org_ids[0] if org_ids else to_uuid("org_test")
                     if "/organizations" not in path:
-                        self._post_records(
+                        self._post_records_safe(
                             "/api/database/records/organizations",
                             [{"id": default_org, "name": f"Team {default_org}", "plan": "free"}],
                             prefer="resolution=ignore-duplicates",
-                            timeout=timeout,
+                            timeout=_scaffold_timeout,
                         )
 
                     dummy_brand_id = to_uuid("dummy_brand")
                     if "/brands" not in path:
-                        self._post_records(
+                        self._post_records_safe(
                             "/api/database/records/brands",
                             [{
                                 "id": dummy_brand_id,
@@ -316,10 +342,10 @@ class DiscoveryStore:
                                 "confidence": 1.0,
                             }],
                             prefer="resolution=ignore-duplicates",
-                            timeout=timeout,
+                            timeout=_scaffold_timeout,
                         )
 
-                    self._post_records(
+                    self._post_records_safe(
                         "/api/database/records/campaigns",
                         [{
                             "id": cid,
@@ -334,7 +360,7 @@ class DiscoveryStore:
                             "search_queries": []
                         }],
                         prefer="resolution=ignore-duplicates",
-                        timeout=timeout,
+                        timeout=_scaffold_timeout,
                     )
 
         url = f"{self.url}{path}"
@@ -916,6 +942,35 @@ class DiscoveryStore:
             "job_summary": job_summary,
         }
 
+    def list_campaigns(self, org_id: str | None = None, limit: int = 20) -> list[dict]:
+        limit = min(max(int(limit), 1), 100)
+        path = f"/api/database/records/campaigns?order=updated_at.desc&limit={limit}"
+        if org_id:
+            path = f"/api/database/records/campaigns?org_id=eq.{to_uuid(org_id)}&order=updated_at.desc&limit={limit}"
+        rows = self._request("GET", path)
+        campaigns: list[dict] = []
+        for campaign in rows or []:
+            brief = campaign.get("brief_json") or {}
+            campaigns.append(
+                {
+                    "id": campaign["id"],
+                    "org_id": campaign.get("org_id"),
+                    "brand_id": campaign.get("brand_id"),
+                    "brand_url": campaign.get("brand_url"),
+                    "goal": campaign.get("goal"),
+                    "geo": campaign.get("geography"),
+                    "platforms": campaign.get("platforms") or [],
+                    "status": campaign.get("status"),
+                    "created_at": campaign.get("created_at"),
+                    "updated_at": campaign.get("updated_at"),
+                    "brief": brief,
+                    "search_queries": campaign.get("search_queries") or [],
+                    "jobs": [],
+                    "job_summary": summarize_job_statuses([]),
+                }
+            )
+        return campaigns
+
     def update_campaign_status(self, campaign_id: str, status: str) -> None:
         self._request(
             "PATCH",
@@ -981,7 +1036,7 @@ class DiscoveryStore:
         return rows
 
     def update_campaign_creator(self, campaign_id: str, creator_id: str, fields: dict) -> dict | None:
-        allowed = {"status", "recommended_pitch", "notes"}
+        allowed = {"status", "recommended_pitch", "notes", "outreach_draft"}
         patch = {key: value for key, value in fields.items() if key in allowed}
         if not patch:
             return self.get_campaign_creator(campaign_id, creator_id)

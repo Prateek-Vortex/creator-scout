@@ -7,9 +7,9 @@ import type { FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getInsForgeClient } from "@/lib/insforge";
 import { api } from "@/lib/api";
-import type { DeveloperKey, CreditStatus } from "@/lib/api";
+import type { DeveloperKey, CreditStatus, GmailIntegrationStatus } from "@/lib/api";
 
-type SettingsTab = "profile" | "security" | "keys";
+type SettingsTab = "profile" | "security" | "keys" | "integrations";
 
 // Accent sticker rotations for styling
 const STICKER_ROTATIONS = [-1.5, 2, -1, 1.5];
@@ -43,6 +43,12 @@ export default function SettingsPage() {
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
 
+  // Gmail integration state
+  const [gmail, setGmail] = useState<GmailIntegrationStatus | null>(null);
+  const [loadingGmail, setLoadingGmail] = useState(false);
+  const [gmailMessage, setGmailMessage] = useState("");
+  const [isConnectingGmail, setIsConnectingGmail] = useState(false);
+
   // Load User and Keys
   useEffect(() => {
     async function loadUser() {
@@ -66,6 +72,71 @@ export default function SettingsPage() {
     }
     loadUser();
   }, [router]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const gmailParam = params.get("gmail");
+    if (!gmailParam) return;
+    setActiveTab("integrations");
+    if (gmailParam === "connected") {
+      setGmailMessage("Gmail connected successfully.");
+    } else if (gmailParam === "error") {
+      setGmailMessage(`Gmail connection failed: ${params.get("reason") || "unknown error"}.`);
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("gmail");
+    url.searchParams.delete("reason");
+    window.history.replaceState({}, "", url.toString());
+    loadGmail();
+  }, []);
+
+  async function loadGmail() {
+    setLoadingGmail(true);
+    try {
+      const res = await api.getGmailStatus();
+      setGmail(res?.data || null);
+    } catch (err) {
+      console.error("Failed to load Gmail status:", err);
+    } finally {
+      setLoadingGmail(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === "integrations" && gmail === null && !loadingGmail) {
+      loadGmail();
+    }
+  }, [activeTab, gmail, loadingGmail]);
+
+  async function handleConnectGmail() {
+    setIsConnectingGmail(true);
+    setGmailMessage("");
+    try {
+      const res = await api.getGmailAuthUrl();
+      if (res?.data?.url) {
+        window.location.href = res.data.url;
+        return;
+      }
+      setGmailMessage("Could not start Gmail connection.");
+    } catch (err) {
+      setGmailMessage(err instanceof Error ? err.message : "Failed to start Gmail connection.");
+    } finally {
+      setIsConnectingGmail(false);
+    }
+  }
+
+  async function handleDisconnectGmail() {
+    if (!confirm("Disconnect Gmail? You won't be able to send outreach until you reconnect.")) return;
+    try {
+      await api.disconnectGmail();
+      setGmail({ connected: false, email: null, from_email: null, from_name: null });
+      setGmailMessage("Gmail disconnected.");
+    } catch (err) {
+      setGmailMessage(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
+    }
+  }
 
   async function loadKeys(userId: string) {
     setLoadingKeys(true);
@@ -253,6 +324,7 @@ export default function SettingsPage() {
                 { id: "profile", label: "Profile details", color: "badge-coral" },
                 { id: "security", label: "Security & auth", color: "badge-lavender" },
                 { id: "keys", label: "API Credentials", color: "badge-teal" },
+                { id: "integrations", label: "Connected accounts", color: "badge-amber" },
               ] as const
             ).map((t) => {
               const active = activeTab === t.id;
@@ -556,6 +628,66 @@ export default function SettingsPage() {
                             </div>
                           ))}
                         </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeTab === "integrations" && (
+                  <motion.div
+                    key="integrations"
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -12 }}
+                    transition={{ duration: 0.3 }}
+                    className="grid gap-6"
+                  >
+                    <div>
+                      <h2 className="text-base font-semibold text-ink mb-1.5">Gmail</h2>
+                      <p className="text-xs text-[#7a7a7a] mb-5">
+                        Connect your Gmail account so outreach emails are sent from your own address. Replies will arrive in your Gmail inbox.
+                      </p>
+
+                      {loadingGmail ? (
+                        <div className="text-xs text-[#7a7a7a] font-mono">Checking Gmail connection...</div>
+                      ) : gmail?.connected ? (
+                        <div className="p-4 rounded-xl border border-[#e8e4df] bg-white flex items-center justify-between gap-4">
+                          <div className="grid gap-1 truncate">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-[#7a7a7a]">Connected as</p>
+                            <p className="text-sm font-mono text-ink truncate">{gmail.email || "Gmail account"}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleDisconnectGmail}
+                            className="px-3 py-1.5 text-[10px] font-semibold text-danger bg-danger/5 border border-danger/20 hover:bg-danger hover:text-white transition rounded-lg cursor-pointer shrink-0"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-xl border border-dashed border-[#e8e4df] bg-[#faf9f6] flex items-center justify-between gap-4">
+                          <p className="text-xs text-[#7a7a7a]">No Gmail account connected.</p>
+                          <button
+                            type="button"
+                            onClick={handleConnectGmail}
+                            disabled={isConnectingGmail}
+                            className="glow-btn-accent px-4 py-2 text-xs font-semibold cursor-pointer rounded-xl disabled:opacity-50"
+                          >
+                            {isConnectingGmail ? "Redirecting..." : "Connect Gmail"}
+                          </button>
+                        </div>
+                      )}
+
+                      {gmailMessage && (
+                        <p
+                          className={`mt-3 text-xs font-medium ${
+                            gmailMessage.toLowerCase().includes("failed") || gmailMessage.toLowerCase().includes("disconnected")
+                              ? "text-danger"
+                              : "text-success"
+                          }`}
+                        >
+                          {gmailMessage}
+                        </p>
                       )}
                     </div>
                   </motion.div>
