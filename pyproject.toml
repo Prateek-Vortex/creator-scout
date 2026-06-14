@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "creator-scout"
 version = "0.1.0"
@@ -11,9 +15,11 @@ dependencies = [
     "asyncpg>=0.29.0",
     "psycopg[binary]>=3.1.0",
     "sse-starlette>=2.1.0",
+    "cryptography>=42.0.0",
+    "requests>=2.31.0",
 ]
 
-[tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
+[tool.setuptools.packages.find]
+include = ["creator_scout*"]
+exclude = ["apps*", "data*", "docs*", "migrations*", "tests*"]
 

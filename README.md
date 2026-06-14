@@ -16,10 +16,19 @@ Instagram and TikTok are supported as cached/indexed platform filters in the cur
 
 ## Required Environment
 
+**Forking?** Spin up your own InsForge project in ~2 minutes:
+
+```bash
+npx @insforge/cli login --user-api-key <your-user-key>   # one-time
+npx @insforge/cli link --project-id <your-project-id>    # links this repo to your project
+```
+
+The `<your-insforge-project>` placeholder in the env snippets below becomes the `appkey` of the project you just linked. The CLI writes `.insforge/project.json` for you (gitignored).
+
 Server-side Python processes require server-only InsForge credentials:
 
 ```bash
-INSFORGE_API_BASE_URL=https://ffqsewe5.ap-southeast.insforge.app
+INSFORGE_API_BASE_URL=https://<your-insforge-project>.ap-southeast.insforge.app
 INSFORGE_API_KEY=...
 YOUTUBE_API_KEY=...
 TINYFISH_API_KEY=...
@@ -32,7 +41,7 @@ The browser app uses only public client config and the Creator Scout API token:
 # apps/web/.env.local
 NEXT_PUBLIC_CREATOR_SCOUT_API_URL=http://127.0.0.1:8765
 NEXT_PUBLIC_CREATOR_SCOUT_API_TOKEN=...
-NEXT_PUBLIC_INSFORGE_URL=https://ffqsewe5.ap-southeast.insforge.app
+NEXT_PUBLIC_INSFORGE_URL=https://<your-insforge-project>.ap-southeast.insforge.app
 NEXT_PUBLIC_INSFORGE_ANON_KEY=...
 ```
 
@@ -136,3 +145,7 @@ Deploy one worker instance initially to avoid distributed queue-locking complexi
 ## Core Rule
 
 Discovery is the product moat. Competitor APIs such as Modash are benchmarks, not dependencies. Grow the index through allowed public web sources, official APIs, creator opt-in, user imports, creator-owned pages/media kits, and refresh jobs with strict budget and compliance controls.
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](LICENSE).

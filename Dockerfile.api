@@ -10,6 +10,9 @@ COPY pyproject.toml README.md ./
 RUN pip install --no-cache-dir -e .
 
 COPY creator_scout ./creator_scout
-COPY data/seed_queries.json ./data/seed_queries.json
+COPY apps ./apps
+COPY data ./data
 
-CMD ["python", "-m", "creator_scout.discovery.worker", "--loop", "--interval", "5", "--concurrency", "3"]
+EXPOSE 8765
+
+CMD ["python", "-m", "uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8765"]

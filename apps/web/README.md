@@ -9,7 +9,7 @@ Create `apps/web/.env.local` with:
 ```bash
 NEXT_PUBLIC_CREATOR_SCOUT_API_URL=http://127.0.0.1:8765
 NEXT_PUBLIC_CREATOR_SCOUT_API_TOKEN=<demo-api-key-from-python-seed>
-NEXT_PUBLIC_INSFORGE_URL=https://ffqsewe5.ap-southeast.insforge.app
+NEXT_PUBLIC_INSFORGE_URL=https://<your-insforge-project>.ap-southeast.insforge.app
 NEXT_PUBLIC_INSFORGE_ANON_KEY=<insforge-anon-key>
 ```
 
@@ -18,7 +18,7 @@ Only public browser/auth values belong in `NEXT_PUBLIC_*`. Do not put `INSFORGE_
 The Python API and worker run as separate processes and require server-only env vars in their own shell or root `.env`:
 
 ```bash
-INSFORGE_API_BASE_URL=https://ffqsewe5.ap-southeast.insforge.app
+INSFORGE_API_BASE_URL=https://<your-insforge-project>.ap-southeast.insforge.app
 INSFORGE_API_KEY=<server-api-key>
 YOUTUBE_API_KEY=<youtube-api-key>
 TINYFISH_API_KEY=<optional-tinyfish-key>

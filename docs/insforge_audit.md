@@ -5,7 +5,7 @@
 | Step | Status |
 |------|--------|
 | Login with API key | ✅ Authenticated as `prateeksaxena733mole@gmail.com` |
-| Link to new project | ✅ Linked to **creatorScout** (`4c454309-a451-4184-a812-1e807739cdac`) |
+| Link to new project | ✅ Linked to **creatorScout** (`<YOUR_INSFORGE_PROJECT_ID>`) |
 | Agent skills installed | ✅ `insforge`, `insforge-cli`, `insforge-debug`, `insforge-integrations`, `find-skills` |
 | `AGENTS.md` updated | ✅ Updated to reference new project |
 
@@ -15,9 +15,9 @@
 
 | Field | Old Project (AiContentScout) | New Project (creatorScout) |
 |-------|-----|-----|
-| Project ID | `7eed9783-2018-47da-b110-fa181b8f382e` | `4c454309-a451-4184-a812-1e807739cdac` |
-| Appkey | `y9tqgph3` | `ffqsewe5` |
-| API Base URL | `https://y9tqgph3.ap-southeast.insforge.app` | `https://ffqsewe5.ap-southeast.insforge.app` |
+| Project ID | `7eed9783-2018-47da-b110-fa181b8f382e` | `<YOUR_INSFORGE_PROJECT_ID>` |
+| Appkey | `y9tqgph3` | `<YOUR_INSFORGE_APPKEY>` |
+| API Base URL | `https://y9tqgph3.ap-southeast.insforge.app` | `https://<your-insforge-project>.ap-southeast.insforge.app` |
 | Region | `ap-southeast` | `ap-southeast` (same) |
 | Org ID | `e1e3e5a6-6d57-4600-9eb0-928e00f3bbf7` | `e1e3e5a6-6d57-4600-9eb0-928e00f3bbf7` (same) |
 

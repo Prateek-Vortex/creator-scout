@@ -2,8 +2,8 @@
 
 Date: 2026-06-07
 
-Project: `creatorScout` (`4c454309-a451-4184-a812-1e807739cdac`)
-API base: `https://ffqsewe5.ap-southeast.insforge.app`
+Project: `creatorScout` (`<YOUR_INSFORGE_PROJECT_ID>`)
+API base: `https://<your-insforge-project>.ap-southeast.insforge.app`
 CLI user: authenticated through the InsForge CLI. Project API keys and user API keys were not copied into this note.
 
 ## Commands Run

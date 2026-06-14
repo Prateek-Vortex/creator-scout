@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -30,8 +31,10 @@ def seed_database(seed_path: str) -> tuple[list[str], str]:
     records = json.loads(Path(seed_path).read_text(encoding="utf-8"))
     creator_ids = ingest_records(store, records)
 
-    # 3. Provision the exact demo developer key expected by frontend
-    demo_key = "cs_demo__Oa10-u56rUsfIdxMRj7rqrcyldsU096b1KUxzxltic"
+    # 3. Provision a fresh demo developer key. Generated per-run so the
+    #    repository never carries a real token in source; copy the printed
+    #    value into apps/web/.env.local as NEXT_PUBLIC_CREATOR_SCOUT_API_TOKEN.
+    demo_key = f"cs_demo_{secrets.token_urlsafe(32)}"
     store.create_api_key(
         org_id=org_id,
         name="Demo developer key",
