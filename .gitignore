@@ -50,3 +50,5 @@ build/
 .roo
 .trae
 .windsurf
+fly.toml
+Dockerfile

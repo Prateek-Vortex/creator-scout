@@ -1,5 +1,8 @@
 # Creator Scout
 
+> 🚀 **Live demo:** [ffqsewe5.insforge.site](https://ffqsewe5.insforge.site) · API: [creator-scout-api-hk-…fly.dev/health](https://creator-scout-api-hk-4c454309-a451-4184-a812-1e807739cdac.fly.dev/health) · Hackathon 2026 submission
+
+
 Creator Scout is an InsForge-backed creator discovery and campaign shortlisting app. The current product state is documented in [`docs/current_state_and_gaps.md`](docs/current_state_and_gaps.md); use that document as the canonical reference when older PRD/spec files disagree.
 
 ## Current Architecture
@@ -125,22 +128,22 @@ curl -s http://127.0.0.1:8765/v1/campaigns/<campaign_id>/shortlist \
 
 ## Managed Worker
 
-`Dockerfile.worker` builds a worker image with the default command:
+`deploy/worker/Dockerfile` builds a worker image with the default command:
 
 ```bash
-python -m creator_scout.discovery.worker --loop --interval 30
+python -m creator_scout.discovery.worker --loop --interval 5 --concurrency 3
 ```
 
 Required runtime env:
 
-- `INSFORGE_API_BASE_URL`
-- `INSFORGE_API_KEY`
+- `INSFORGE_API_BASE_URL`, `INSFORGE_API_KEY`
 - `YOUTUBE_API_KEY` for YouTube query discovery
-- `TINYFISH_API_KEY` when using TinyFish discovery
+- `TINYFISH_API_KEY` when using TinyFish discovery (also enables TinyFish Agent listicle extraction)
 - `FIRECRAWL_API_KEY` when using explicit Firecrawl URL refresh
-- `AUTOSEND_API_KEY`, `AUTOSEND_FROM_EMAIL`, and `AUTOSEND_UNSUBSCRIBE_GROUP_ID` for explicit outreach sends
+- `EXA_API_KEY`, `TAVILY_API_KEY` for alternate search adapters
+- `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `OAUTH_TOKEN_ENCRYPTION_KEY`, `WEB_APP_URL` for per-user Gmail outreach
 
-Deploy one worker instance initially to avoid distributed queue-locking complexity.
+Deploy via `npx @insforge/cli compute deploy . --name creator-scout-worker --env-file .env`.
 
 ## Core Rule
 
